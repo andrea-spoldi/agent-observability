@@ -7,3 +7,6 @@
 # Session state lives outside the repo by design (see CLAUDE.md), but ignore
 # it here in case OTEL_SESSION_DIR is ever pointed inside the tree
 /agent-otel-session/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports) — git-ignored per project convention
+/.superpowers/

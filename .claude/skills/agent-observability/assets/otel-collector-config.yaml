@@ -46,19 +46,21 @@ exporters:
   #   tls:
   #     insecure: true
 
-  # Uncomment for Grafana Tempo
-  # otlp/tempo:
-  #   endpoint: tempo:4317
-  #   tls:
-  #     insecure: true
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
 
 service:
+  telemetry:
+    logs:
+      level: warn
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch, attributes]
-      exporters: [debug]  # add otlp/jaeger or otlp/tempo here
+      exporters: [debug, otlp/tempo]
     metrics:
       receivers: [otlp]
       processors: [batch, attributes]
-      exporters: [debug]  # add prometheus here
+      exporters: [debug]
