@@ -4,12 +4,12 @@
 {
   "project": "test-o11y",
   "updated": "2026-08-11",
-  "_session_note": "S-002 closed 2026-08-11. T-004 done — but the real blocker wasn't the fresh-session assumption from S-001, it was that Claude Code never reads .claude/hooks.json at all. Found and fixed four independent bugs to get hooks firing end-to-end. New backlog item T-005 opened for a leftover analysis bug in stop.sh.",
+  "_session_note": "S-003 closed 2026-08-11. Repo published to https://github.com/andrea-spoldi/agent-observability (main). Made hook paths portable via ${CLAUDE_PROJECT_DIR} (D-007) so the pushed config works unmodified after a clone, relocated the hooks.json template to assets/ to match SKILL.md's documented file manifest, and wrote README.md covering setup/architecture/known limitations. T-005 (stop.sh tool-name mismatch) is still open, called out explicitly in the README.",
 
   "current_session": {
-    "id": "S-002",
-    "goal": "Verify hooks fire end-to-end (T-004)",
-    "task_ref": "T-004",
+    "id": "S-003",
+    "goal": "Publish reproducible sandbox to GitHub (remote, .gitignore, README, push)",
+    "task_ref": "T-006",
     "started": "2026-08-11",
     "status": "done",
     "blocker": null
@@ -60,6 +60,15 @@
       "priority": 5,
       "status": "pending",
       "tags": ["hooks", "bugfix", "stop.sh"]
+    },
+    {
+      "id": "T-006",
+      "title": "Publish reproducible sandbox to GitHub",
+      "description": "git init, add remote origin (https://github.com/andrea-spoldi/agent-observability.git), write .gitignore and README.md, and push. Required making hook paths portable across machines first (see D-007) — the committed config previously hardcoded this machine's absolute path.",
+      "size": "M",
+      "priority": 6,
+      "status": "done",
+      "tags": ["git", "docs", "publish"]
     }
   ],
 
@@ -105,6 +114,13 @@
       "decision": "Changed the default OTEL_EXPORTER_OTLP_ENDPOINT in lib/common.sh from http://localhost:4317 to http://localhost:4318.",
       "rationale": "otel-cli selects OTLP/HTTP vs OTLP/gRPC based on the endpoint's URL scheme: an http:// prefix means OTLP/HTTP, which must target the HTTP port (4318). Port 4317 is gRPC-only. Sending http:// to 4317 caused otel-cli to speak HTTP/1.1 to a gRPC (HTTP/2) server, silently failing (errors are swallowed by the hook scripts' `2>/dev/null || true`). Confirmed by manually testing otel-cli against both ports with --verbose --fail, then confirming trace receipt in collector logs after the fix.",
       "supersedes": null
+    },
+    {
+      "id": "D-007",
+      "date": "2026-08-11",
+      "decision": "Replaced the hardcoded absolute path (/Users/andreaspoldi/my/test-o11y/...) in .claude/settings.json's hook commands with the ${CLAUDE_PROJECT_DIR} variable Claude Code sets for every hook invocation. Relocated the reference hooks.json template from the project root to assets/hooks.json (matching SKILL.md's documented file manifest, which had referenced a file that never existed there) and gave it the same placeholder plus the correct nested schema.",
+      "rationale": "D-001 explicitly flagged the hardcoded path as sandbox-only and said it would need revisiting if hooks.json were ever templated across repos — that's exactly what publishing to GitHub for reproduction elsewhere requires. Verified ${CLAUDE_PROJECT_DIR} is real (official docs) and actually reaches the hook subprocess (captured its value from a live hook firing) before committing it to a public repo.",
+      "supersedes": "D-001 (hardcoded path was correct for a single-machine sandbox; superseded now that the repo needs to work after a clone)"
     }
   ],
 
@@ -136,6 +152,13 @@
       "completed_date": "2026-08-11",
       "session_ref": "S-002",
       "notes": "Found the real blocker was structural (see D-003) plus three latent bugs (D-004, D-005, D-006) that only surfaced once hooks actually started firing. After all four fixes: PreToolUse/PostToolUse correctly open/close spans named by real tool_use_id, duration_ms reflects real elapsed time, collector logs confirm trace receipt (\"resource spans\": 1), and a manual stop.sh run archived the session log and reset state cleanly. Also fixed CLAUDE.md and SKILL.md, which both documented the now-disproven hooks.json-is-authoritative assumption."
+    },
+    {
+      "id": "T-006",
+      "title": "Publish reproducible sandbox to GitHub",
+      "completed_date": "2026-08-11",
+      "session_ref": "S-003",
+      "notes": "Made hook paths portable via ${CLAUDE_PROJECT_DIR} (D-007), verifying the variable both exists (official docs) and reaches the hook subprocess (captured live) before committing it. Relocated the hooks.json template to assets/ to match SKILL.md's file manifest. Wrote .gitignore (excludes settings.local.json and OS cruft) and README.md (quick start, architecture diagram, known limitations, pointer to TASKS.md decision log). git init + remote add origin + initial commit (20 files) + push to https://github.com/andrea-spoldi/agent-observability main. Verified with a full install.sh + real-tool-call + collector-log pass after all changes, before pushing."
     }
   ]
 }
@@ -150,6 +173,7 @@
 | T-003 | Stand up the otel-collector via docker-compose | S | 3 | done |
 | T-004 | Verify hooks fire end-to-end | M | 4 | done |
 | T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | pending |
+| T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
 
 ## Decisions
 
@@ -159,6 +183,7 @@
 - **D-004** (2026-08-11): Fixed `CALL_ID` derivation to use the real payload field `tool_use_id` instead of the nonexistent `call_id` — fixes span/timestamp files silently colliding on hidden dotfiles.
 - **D-005** (2026-08-11): Fixed `now_ms()` to validate `date`'s output is numeric before trusting it — BSD/macOS `date` doesn't support `%3N` and was silently corrupting every duration measurement.
 - **D-006** (2026-08-11): Fixed the default OTEL endpoint from port 4317 (gRPC) to 4318 (HTTP) to match `otel-cli`'s `http://` scheme-based protocol selection — traces were silently never reaching the collector.
+- **D-007** (2026-08-11): Replaced the hardcoded absolute path in `.claude/settings.json` with `${CLAUDE_PROJECT_DIR}` and relocated the `hooks.json` template to `assets/` — supersedes D-001, needed for the repo to work after a clone.
 
 ## Completed
 
@@ -166,3 +191,4 @@
 - **T-002** (2026-08-11, S-001): Ran `install.sh` preflight — jq ok, otel-cli installed, hooks chmod +x.
 - **T-003** (2026-08-11, S-001): Published collector ports, confirmed reachable at localhost:4317/4318.
 - **T-004** (2026-08-11, S-002): Verified hooks fire end-to-end after fixing four compounding bugs (D-003 through D-006). Confirmed via collector logs (`"resource spans": 1`), a correct `duration_ms`, correctly-named span files, and a clean manual `stop.sh` run (archived log, reset session state). Also corrected `CLAUDE.md` and `SKILL.md`, which both documented the disproven "hooks.json is authoritative" assumption.
+- **T-006** (2026-08-11, S-003): Made hook config portable (D-007), wrote `.gitignore`/`README.md`, and pushed the initial commit to `https://github.com/andrea-spoldi/agent-observability` (main).
