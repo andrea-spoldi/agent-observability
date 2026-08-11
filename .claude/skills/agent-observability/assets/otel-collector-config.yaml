@@ -1,0 +1,64 @@
+# otel-collector-config.yaml
+# Minimal config for agent-observability PoC.
+# Receives OTLP gRPC on :4317, exports to stdout (debug) and optionally
+# to Prometheus (:8889) and Jaeger (:14250).
+#
+# Usage:
+#   docker run --rm -p 4317:4317 -p 4318:4318 -p 8889:8889 \
+#     -v $(pwd)/otel-collector-config.yaml:/etc/otelcol/config.yaml \
+#     otel/opentelemetry-collector-contrib:latest
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+
+  # Add session_id as a resource attribute for grouping
+  attributes:
+    actions:
+      - key: agent.framework
+        value: claude-code
+        action: upsert
+
+exporters:
+  # Always-on: readable in docker logs
+  debug:
+    verbosity: basic
+
+  # Uncomment for Prometheus scraping
+  # prometheus:
+  #   endpoint: 0.0.0.0:8889
+  #   namespace: agent
+  #   resource_to_telemetry_conversion:
+  #     enabled: true
+
+  # Uncomment for Jaeger
+  # otlp/jaeger:
+  #   endpoint: jaeger:4317
+  #   tls:
+  #     insecure: true
+
+  # Uncomment for Grafana Tempo
+  # otlp/tempo:
+  #   endpoint: tempo:4317
+  #   tls:
+  #     insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes]
+      exporters: [debug]  # add otlp/jaeger or otlp/tempo here
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes]
+      exporters: [debug]  # add prometheus here

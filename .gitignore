@@ -1,0 +1,9 @@
+# OS cruft
+.DS_Store
+
+# Claude Code local/machine-specific settings — not needed to reproduce the sandbox
+.claude/settings.local.json
+
+# Session state lives outside the repo by design (see CLAUDE.md), but ignore
+# it here in case OTEL_SESSION_DIR is ever pointed inside the tree
+/agent-otel-session/

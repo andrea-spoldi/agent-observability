@@ -1,0 +1,9 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    # Configure your collector pipeline as needed.
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+         - .claude/skills/agent-observability/assets/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
