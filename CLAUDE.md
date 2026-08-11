@@ -8,12 +8,13 @@ metrics/traces to a local otel-collector.
 - Hook scripts live in `.claude/skills/agent-observability/assets/hooks/` — do not
   duplicate them, reference by absolute path.
 - Hooks are registered in `.claude/settings.json` under the `hooks` key (each entry
-  needs `{"hooks": [{"type": "command", "command": "..."}]}`). `.claude/hooks.json`
-  is NOT read by Claude Code — it's an inert template; keeping it in sync with
-  settings.json is manual.
-- otel-cli's `--endpoint` scheme picks the protocol: `http://` selects OTLP/HTTP,
-  which must target port 4318, not the gRPC port 4317 — `http://localhost:4317`
-  silently sends nothing (otel-cli errors are swallowed unless `--verbose --fail`).
+  needs `{"hooks": [{"type": "command", "command": "..."}]}`). Claude Code does NOT
+  read a standalone `hooks.json` file — `assets/hooks.json` is only a reference
+  template; keeping it in sync with `settings.json` is manual.
+- `${OTEL_ENDPOINT}` must be the OTLP/**HTTP** port (4318), not the gRPC-only port
+  4317 — both traces (`otel-cli`, which picks protocol from the `http://` scheme)
+  and metrics (`curl`, posted directly to `${OTEL_ENDPOINT}/v1/metrics`) depend on
+  this. Sending either to 4317 silently sends nothing.
 - The otel-collector config path is fixed in `docker-compose.yaml`; if the collector
   config moves, update the volume mount there too.
 
@@ -22,5 +23,6 @@ metrics/traces to a local otel-collector.
   `${OTEL_SESSION_DIR:-/tmp/agent-otel-session}/` instead of failing the tool call.
 
 ## Stack shorthand
-- Hook scripts: bash, using `jq` + `otel-cli`
+- Hook scripts: bash, using `jq` + `otel-cli` (traces) + `curl` (metrics, hand-built
+  OTLP/HTTP JSON — `otel-cli` has no metrics command)
 - Collector: `otel/opentelemetry-collector-contrib` via docker-compose

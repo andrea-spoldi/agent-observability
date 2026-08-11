@@ -4,12 +4,12 @@
 {
   "project": "test-o11y",
   "updated": "2026-08-11",
-  "_session_note": "S-003 closed 2026-08-11. Repo published to https://github.com/andrea-spoldi/agent-observability (main). Made hook paths portable via ${CLAUDE_PROJECT_DIR} (D-007) so the pushed config works unmodified after a clone, relocated the hooks.json template to assets/ to match SKILL.md's documented file manifest, and wrote README.md covering setup/architecture/known limitations. T-005 (stop.sh tool-name mismatch) is still open, called out explicitly in the README.",
+  "_session_note": "S-004 closed 2026-08-11. Closed the fake-metrics gap found while answering a user question after S-003: emit_counter() now sends real OTLP metrics (D-008) instead of spans tagged to look like counters. T-005 (stop.sh tool-name mismatch) and T-008 (stale TraceQL docs, found this session) are still open. Not yet pushed to GitHub — pending user confirmation like the S-003 push was.",
 
   "current_session": {
-    "id": "S-003",
-    "goal": "Publish reproducible sandbox to GitHub (remote, .gitignore, README, push)",
-    "task_ref": "T-006",
+    "id": "S-004",
+    "goal": "Fix fake-metrics gap: make emit_counter() send real OTLP metrics (T-007)",
+    "task_ref": "T-007",
     "started": "2026-08-11",
     "status": "done",
     "blocker": null
@@ -69,6 +69,24 @@
       "priority": 6,
       "status": "done",
       "tags": ["git", "docs", "publish"]
+    },
+    {
+      "id": "T-007",
+      "title": "Fix fake-metrics gap: emit_counter() never sends real OTLP metrics",
+      "description": "otel-cli (assets/lib/common.sh) only exposes span/exec/status/server subcommands — no metrics command. emit_counter() fakes a counter by sending a `span` named `metric.<name>` with the value in span attributes. Confirmed live: the collector's debug exporter logs `\"otelcol.signal\": \"traces\"` for every emit_counter call, never `\"metrics\"` — nothing ever reaches the collector's metrics pipeline or /v1/metrics. Needs a design decision on the fix approach (see D-008 once decided) before implementing.",
+      "size": "M",
+      "priority": 7,
+      "status": "done",
+      "tags": ["otel", "bugfix", "metrics"]
+    },
+    {
+      "id": "T-008",
+      "title": "Fix stale TraceQL examples in metrics-dictionary.md",
+      "description": "The 'Trace Queries' section documents queries against span attributes `span.agent.tool.is_retry` and `span.agent.tool.is_duplicate` that are never actually set on any span — retry-switch and duplicate-call detection only ever happens in stop.sh's post-hoc session.jsonl analysis and is only emitted as a metric (agent.tool.retry_switches, agent.tool.duplicate_calls), never as a span attribute on the original tool-call span. Either add the attributes to the relevant spans, or rewrite/remove these TraceQL examples.",
+      "size": "S",
+      "priority": 8,
+      "status": "pending",
+      "tags": ["docs", "bugfix", "metrics-dictionary"]
     }
   ],
 
@@ -121,6 +139,13 @@
       "decision": "Replaced the hardcoded absolute path (/Users/andreaspoldi/my/test-o11y/...) in .claude/settings.json's hook commands with the ${CLAUDE_PROJECT_DIR} variable Claude Code sets for every hook invocation. Relocated the reference hooks.json template from the project root to assets/hooks.json (matching SKILL.md's documented file manifest, which had referenced a file that never existed there) and gave it the same placeholder plus the correct nested schema.",
       "rationale": "D-001 explicitly flagged the hardcoded path as sandbox-only and said it would need revisiting if hooks.json were ever templated across repos — that's exactly what publishing to GitHub for reproduction elsewhere requires. Verified ${CLAUDE_PROJECT_DIR} is real (official docs) and actually reaches the hook subprocess (captured its value from a live hook firing) before committing it to a public repo.",
       "supersedes": "D-001 (hardcoded path was correct for a single-machine sandbox; superseded now that the repo needs to work after a clone)"
+    },
+    {
+      "id": "D-008",
+      "date": "2026-08-11",
+      "decision": "Rewrote emit_counter() in lib/common.sh to POST a real OTLP Sum metric (delta temporality, isMonotonic=true) as OTLP/HTTP JSON via curl+jq to ${OTEL_ENDPOINT}/v1/metrics, instead of faking a counter as an otel-cli span. Kept the exact same function signature (name, value, key=val...), so pre_tool_use.sh, post_tool_use.sh, and stop.sh needed zero changes. otel-cli itself is untouched and still handles all tracing (start_span/end_span).",
+      "rationale": "Confirmed otel-cli's latest release (v0.4.5, Apr 2024) still has no metrics command — a hoped-for v0.5.0 with metrics/logs support never shipped — ruling out staying within otel-cli. User explicitly chose preserving the exact metric names/shape from metrics-dictionary.md over letting the collector derive different-shaped metrics from spans (e.g. via the spanmetrics connector), which also wouldn't have covered stop.sh's four session-level analysis metrics (they have no corresponding span to derive from). DELTA (not CUMULATIVE) temporality because each hook invocation is a fresh, stateless bash process with no persisted running total. Verified the collector's OTLP/HTTP receiver accepts JSON (not just protobuf) before committing to this approach, and verified full metric content (name/type/temporality/attributes/value) via the debug exporter's detailed verbosity before shipping. One implementation bug caught during testing: jq's --args flag requires the filter immediately after it, with positional args after the filter — putting them before it makes jq try to parse the first positional arg as the filter.",
+      "supersedes": null
     }
   ],
 
@@ -159,6 +184,13 @@
       "completed_date": "2026-08-11",
       "session_ref": "S-003",
       "notes": "Made hook paths portable via ${CLAUDE_PROJECT_DIR} (D-007), verifying the variable both exists (official docs) and reaches the hook subprocess (captured live) before committing it. Relocated the hooks.json template to assets/ to match SKILL.md's file manifest. Wrote .gitignore (excludes settings.local.json and OS cruft) and README.md (quick start, architecture diagram, known limitations, pointer to TASKS.md decision log). git init + remote add origin + initial commit (20 files) + push to https://github.com/andrea-spoldi/agent-observability main. Verified with a full install.sh + real-tool-call + collector-log pass after all changes, before pushing."
+    },
+    {
+      "id": "T-007",
+      "title": "Fix fake-metrics gap: emit_counter() never sends real OTLP metrics",
+      "completed_date": "2026-08-11",
+      "session_ref": "S-004",
+      "notes": "Implemented per D-008: emit_counter() now posts real OTLP Sum metrics via curl+jq, zero changes needed to the three call sites. Ruled out staying within otel-cli by checking its release history (still v0.4.5, metrics never shipped). Verified the collector's HTTP receiver accepts OTLP JSON (not just protobuf) before committing to the approach. Hit and fixed one bug during testing: jq's --args needs the filter immediately after it, positional args after — had them reversed initially, which made jq try to compile 'tool_name=Bash' as a jq program. Verified end-to-end: collector debug exporter (bumped to verbosity:detailed temporarily, reverted after) showed correct name/type/temporality/attributes/value for a real emit_counter call, and both pre/post-hook call-level metrics and stop.sh's session-level metrics land correctly. Added a curl preflight check to install.sh since it's now a runtime dependency, not just install-time. Updated README.md and CLAUDE.md to describe the new mechanism. Opened T-008 for an unrelated stale-docs issue found along the way (metrics-dictionary.md's TraceQL examples reference span attributes that don't exist)."
     }
   ]
 }
@@ -174,6 +206,8 @@
 | T-004 | Verify hooks fire end-to-end | M | 4 | done |
 | T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | pending |
 | T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
+| T-007 | Fix fake-metrics gap: `emit_counter()` never sends real OTLP metrics | M | 7 | done |
+| T-008 | Fix stale TraceQL examples in `metrics-dictionary.md` | S | 8 | pending |
 
 ## Decisions
 
@@ -184,6 +218,7 @@
 - **D-005** (2026-08-11): Fixed `now_ms()` to validate `date`'s output is numeric before trusting it — BSD/macOS `date` doesn't support `%3N` and was silently corrupting every duration measurement.
 - **D-006** (2026-08-11): Fixed the default OTEL endpoint from port 4317 (gRPC) to 4318 (HTTP) to match `otel-cli`'s `http://` scheme-based protocol selection — traces were silently never reaching the collector.
 - **D-007** (2026-08-11): Replaced the hardcoded absolute path in `.claude/settings.json` with `${CLAUDE_PROJECT_DIR}` and relocated the `hooks.json` template to `assets/` — supersedes D-001, needed for the repo to work after a clone.
+- **D-008** (2026-08-11): Rewrote `emit_counter()` to POST real OTLP `Sum` metrics (delta temporality) via `curl`+`jq` instead of faking counters as `otel-cli` spans — `otel-cli` still has no metrics command as of its latest release (v0.4.5). Zero changes needed to the three call sites since the function signature stayed the same.
 
 ## Completed
 
@@ -192,3 +227,4 @@
 - **T-003** (2026-08-11, S-001): Published collector ports, confirmed reachable at localhost:4317/4318.
 - **T-004** (2026-08-11, S-002): Verified hooks fire end-to-end after fixing four compounding bugs (D-003 through D-006). Confirmed via collector logs (`"resource spans": 1`), a correct `duration_ms`, correctly-named span files, and a clean manual `stop.sh` run (archived log, reset session state). Also corrected `CLAUDE.md` and `SKILL.md`, which both documented the disproven "hooks.json is authoritative" assumption.
 - **T-006** (2026-08-11, S-003): Made hook config portable (D-007), wrote `.gitignore`/`README.md`, and pushed the initial commit to `https://github.com/andrea-spoldi/agent-observability` (main).
+- **T-007** (2026-08-11, S-004): `emit_counter()` now sends real OTLP metrics (D-008) instead of fake spans — verified with detailed collector-log output showing correct name/type/temporality/attributes/value, and confirmed both per-call and session-level (`stop.sh`) metrics land correctly.

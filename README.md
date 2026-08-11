@@ -79,11 +79,13 @@ Claude Code tool call
                                         counters, archives + resets state
 ```
 
-Traces and counters both go out via `otel-cli`, which only has a `span`
-subcommand (no native metrics command) — counters are encoded as
-attribute-tagged spans named `metric.<name>` rather than true OTLP metric data
-points. See `assets/references/metrics-dictionary.md` for the full metric
-catalogue and rationale.
+Traces go out via `otel-cli span` (its only relevant subcommand — it has no
+metrics API). Counters go out as real OTLP `Sum` metrics (delta temporality)
+posted directly to `${OTEL_ENDPOINT}/v1/metrics` as OTLP/HTTP JSON via `curl`
++ `jq`, built inline in `emit_counter()` — delta rather than cumulative
+because each hook invocation is a fresh, stateless process with no running
+total to report. See `assets/references/metrics-dictionary.md` for the full
+metric catalogue.
 
 ## Known limitations
 
@@ -91,13 +93,16 @@ catalogue and rationale.
   `bash_tool` / `view` / `create_file` / `str_replace`, which don't match
   Claude Code's actual tool names (`Bash`, `Read`, `Edit`, `Write`) — it can
   never fire as currently written. Tracked in `TASKS.md` as T-005.
-- Metrics are simulated as spans (see Architecture above) due to `otel-cli`
-  not exposing a metrics API.
+- `metrics-dictionary.md`'s "Trace Queries" section references span
+  attributes (`span.agent.tool.is_retry`, `span.agent.tool.is_duplicate`)
+  that are never actually set on any span — those signals are only ever
+  emitted as metrics via `stop.sh`'s post-hoc analysis, not as span
+  attributes. Tracked in `TASKS.md` as T-008.
 
 ## Project history
 
-`TASKS.md` has the full backlog and a decision log (`D-001`…`D-006`) covering
+`TASKS.md` has the full backlog and a decision log (`D-001`…`D-008`) covering
 every bug found while getting this working — several are non-obvious
 environment quirks (BSD `date` vs GNU `date`, `otel-cli`'s HTTP-vs-gRPC port
-selection, Claude Code's actual hook payload field names) worth reading before
-changing the hook scripts.
+selection, Claude Code's actual hook payload field names, jq's `--args`
+ordering) worth reading before changing the hook scripts.

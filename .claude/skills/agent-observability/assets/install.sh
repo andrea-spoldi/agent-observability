@@ -44,6 +44,14 @@ else
   ERRORS=$((ERRORS + 1))
 fi
 
+if command -v curl &>/dev/null; then
+  ok "curl found"
+else
+  fail "curl not found (required at runtime — emit_counter posts OTLP metrics directly)"
+  echo "     Install: sudo apt-get install curl  OR  brew install curl"
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ---------------------------------------------------------------------------
 # 2. otel-cli
 # ---------------------------------------------------------------------------

@@ -40,23 +40,55 @@ OTEL_SERVICE_NAME="${OTEL_SERVICE_NAME:-claude-agent}"
 # ---------------------------------------------------------------------------
 OTEL_CLI="${OTEL_CLI_PATH:-otel-cli}"
 
-# Emit a counter increment via otel-cli
+# Emit a real OTLP metric (Sum, delta temporality) via OTLP/HTTP JSON.
+# otel-cli has no metrics command (traces only), so this posts directly —
+# DELTA temporality because each hook invocation is a fresh, stateless
+# process with no memory of a running total to report as CUMULATIVE.
 # Usage: emit_counter <metric_name> <value> <key=val> [key=val ...]
 emit_counter() {
   local name="$1"; shift
   local value="$1"; shift
-  local attrs=""
-  for kv in "$@"; do
-    attrs="${attrs:+${attrs},}${kv}"
-  done
+  local ts_ns
+  ts_ns="$(( $(now_ms) * 1000000 ))"
 
-  "${OTEL_CLI}" span \
-    --service "${OTEL_SERVICE_NAME}" \
-    --name "metric.${name}" \
-    --endpoint "${OTEL_ENDPOINT}" \
-    --attrs "metric.name=${name},metric.value=${value}${attrs:+,${attrs}}" \
-    --tp-required \
-    2>/dev/null || true
+  local payload
+  payload="$(jq -cn \
+    --arg service "${OTEL_SERVICE_NAME}" \
+    --arg name "${name}" \
+    --arg value "${value}" \
+    --arg ts "${ts_ns}" \
+    --args \
+    '{
+      resourceMetrics: [{
+        resource: { attributes: [{key: "service.name", value: {stringValue: $service}}] },
+        scopeMetrics: [{
+          metrics: [{
+            name: $name,
+            sum: {
+              dataPoints: [{
+                asInt: $value,
+                startTimeUnixNano: $ts,
+                timeUnixNano: $ts,
+                attributes: [ $ARGS.positional[] | split("=") | {key: .[0], value: {stringValue: (.[1:] | join("="))}} ]
+              }],
+              aggregationTemporality: "AGGREGATION_TEMPORALITY_DELTA",
+              isMonotonic: true
+            }
+          }]
+        }]
+      }]
+    }' \
+    "$@" 2>/dev/null)" || return 0
+
+  [[ -n "${payload}" ]] || return 0
+
+  curl -sf -X POST "${OTEL_ENDPOINT}/v1/metrics" \
+    -H "Content-Type: application/json" \
+    --max-time 2 \
+    --data "${payload}" \
+    >/dev/null 2>&1 || true
+
+  return 0
 }
 
 # Start a span and write its context to a file for later closing
