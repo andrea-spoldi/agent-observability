@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: agent-observability
+    type: file
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/files
+      foldersFromFilesStructure: false

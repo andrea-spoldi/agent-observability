@@ -1,0 +1,122 @@
+{
+  "uid": "agent-tool-metrics",
+  "title": "Agent Tool Metrics",
+  "tags": ["agent-observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    { "type": "row", "title": "Session Overview", "collapsed": false, "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "type": "stat",
+      "title": "Overall Success Rate",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "1 - (sum(rate(agent_agent_tool_call_error_total[$__rate_interval])) / sum(rate(agent_agent_tool_call_total[$__rate_interval])))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "red", "value": null },
+        { "color": "yellow", "value": 0.75 },
+        { "color": "green", "value": 0.9 }
+      ] } }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Total Calls",
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(agent_agent_tool_call_total[$__range]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Session Success Rate (Σ over range)",
+      "description": "agent.session.success_rate_pct is emitted via emit_counter() as a DELTA Sum, not a true OTLP gauge (see D-008 in TASKS.md) — each stop.sh run adds one session's rate as a delta, which the Prometheus exporter accumulates into an ever-increasing counter. There is no instantaneous 'current value' to read, so this sums the deltas added in the selected time range instead. That equals a single session's rate if only one session ended in range; if several did, values add up and can exceed 100. Narrow the time range to one session for a clean reading.",
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(agent_agent_session_success_rate_pct_total[$__range]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "red", "value": null },
+        { "color": "yellow", "value": 75 },
+        { "color": "green", "value": 90 }
+      ] } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(agent_agent_tool_call_error_total[$__rate_interval]))", "refId": "A", "legendFormat": "errors/s" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Tool Breakdown", "collapsed": false, "gridPos": { "x": 0, "y": 7, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "type": "barchart",
+      "title": "Calls by Tool",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (tool_name) (increase(agent_agent_tool_call_total[$__range]))", "refId": "A", "legendFormat": "{{tool_name}}", "instant": true, "format": "table" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "bargauge",
+      "title": "Error Rate by Tool",
+      "description": "No duration metric is emitted (only counters/gauges), so this replaces the box-plot/heatmap panels suggested in metrics-dictionary.md's layout sketch with panel types the actual metric shapes support.",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (tool_name) (rate(agent_agent_tool_call_error_total[$__rate_interval])) / sum by (tool_name) (rate(agent_agent_tool_call_total[$__rate_interval]))", "refId": "A", "legendFormat": "{{tool_name}}", "instant": true, "format": "table" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null },
+        { "color": "yellow", "value": 0.1 },
+        { "color": "red", "value": 0.25 }
+      ] } }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Quality Signals", "collapsed": false, "gridPos": { "x": 0, "y": 16, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "type": "piechart",
+      "title": "Param Issues by Type",
+      "gridPos": { "x": 0, "y": 17, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (issue_type) (increase(agent_agent_tool_params_issues_total[$__range]))", "refId": "A", "legendFormat": "{{issue_type}}", "instant": true, "format": "table" }]
+    },
+    {
+      "type": "barchart",
+      "title": "Duplicate Calls by Tool",
+      "gridPos": { "x": 8, "y": 17, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "topk(5, sum by (tool_name) (increase(agent_agent_tool_duplicate_calls_total[$__range])))", "refId": "A", "legendFormat": "{{tool_name}}", "instant": true, "format": "table" }]
+    },
+    {
+      "type": "stat",
+      "title": "Read-Before-Write Violations (avg/session)",
+      "gridPos": { "x": 16, "y": 17, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "avg(increase(agent_agent_tool_read_before_write_violations_total[$__range]))", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null },
+        { "color": "yellow", "value": 2 },
+        { "color": "red", "value": 4 }
+      ] } }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Selection Patterns", "collapsed": false, "gridPos": { "x": 0, "y": 25, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "type": "table",
+      "title": "Retry Switches (from_tool → to_tool)",
+      "description": "Top wrong-tool-then-correct-tool patterns. A Sankey diagram would visualize this flow more directly but needs a community plugin not present in the base grafana/grafana image; using a table instead.",
+      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "topk(10, sum by (from_tool, to_tool) (increase(agent_agent_tool_retry_switches_total[$__range])))", "refId": "A", "instant": true, "format": "table" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Consecutive Errors by Tool",
+      "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (tool_name) (increase(agent_agent_tool_consecutive_errors_total[$__range]))", "refId": "A", "legendFormat": "{{tool_name}}" }]
+    }
+  ]
+}

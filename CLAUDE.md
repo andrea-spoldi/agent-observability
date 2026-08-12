@@ -25,7 +25,13 @@ metrics/traces to a local otel-collector.
   `assets/grafana-datasources.yaml` mounted into
   `/etc/grafana/provisioning/datasources/`. Editing datasource URLs anywhere
   else (e.g. through the Grafana UI) won't survive a container recreate —
-  edit that file instead.
+  edit that file instead. Datasource `uid`s (`tempo`, `prometheus`) are
+  pinned in that file and referenced by `uid` from dashboard JSON — don't
+  remove them, dashboards would stop resolving their datasource.
+- Dashboards are provisioned the same way: `assets/dashboards/*.json` +
+  `assets/grafana-dashboards-provider.yaml`, mounted into
+  `/etc/grafana/provisioning/dashboards/`. Edit the JSON files, not the
+  Grafana UI.
 - All four services (`otel-collector`, `tempo`, `prometheus`, `grafana`) are
   defined in the one `docker-compose.yaml`; there is no separate compose file
   per service.

@@ -28,6 +28,13 @@ processors:
         value: claude-code
         action: upsert
 
+  # emit_counter() sends DELTA-temporality Sums (see D-008 in TASKS.md — each
+  # hook invocation is a stateless process with no running total). The
+  # Prometheus exporter needs CUMULATIVE counters to accumulate correctly
+  # across scrapes; without this, series don't persist between calls and
+  # rate()/increase() queries return empty or misleading results.
+  delta_to_cumulative:
+
 exporters:
   # Always-on: readable in docker logs
   debug:
@@ -61,5 +68,5 @@ service:
       exporters: [debug, otlp/tempo]
     metrics:
       receivers: [otlp]
-      processors: [batch, attributes]
+      processors: [batch, attributes, delta_to_cumulative]
       exporters: [debug, prometheus]

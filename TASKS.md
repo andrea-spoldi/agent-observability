@@ -7,10 +7,10 @@
   "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-005",
-    "goal": "Replace OpenObserve with Tempo + Prometheus + Grafana for traces/metrics (T-009)",
-    "task_ref": "T-009",
-    "started": "2026-08-11",
+    "id": "S-006",
+    "goal": "Create Grafana dashboards for OTEL metrics (Prometheus) and traces (Tempo)",
+    "task_ref": "T-010",
+    "started": "2026-08-12",
     "status": "done",
     "blocker": null
   },
@@ -81,12 +81,21 @@
     },
     {
       "id": "T-008",
-      "title": "Fix stale TraceQL examples in metrics-dictionary.md",
-      "description": "The 'Trace Queries' section documents queries against span attributes `span.agent.tool.is_retry` and `span.agent.tool.is_duplicate` that are never actually set on any span — retry-switch and duplicate-call detection only ever happens in stop.sh's post-hoc session.jsonl analysis and is only emitted as a metric (agent.tool.retry_switches, agent.tool.duplicate_calls), never as a span attribute on the original tool-call span. Either add the attributes to the relevant spans, or rewrite/remove these TraceQL examples.",
+      "title": "Fix stale TraceQL/PromQL examples in metrics-dictionary.md",
+      "description": "The 'Trace Queries' section documents queries against span attributes `span.agent.tool.is_retry` and `span.agent.tool.is_duplicate` that are never actually set on any span — retry-switch and duplicate-call detection only ever happens in stop.sh's post-hoc session.jsonl analysis and is only emitted as a metric (agent.tool.retry_switches, agent.tool.duplicate_calls), never as a span attribute on the original tool-call span. Either add the attributes to the relevant spans, or rewrite/remove these TraceQL examples. ALSO (found during T-010): every PromQL example in this file uses bare names like `agent_tool_call_total`, but the collector's prometheus exporter has `namespace: agent` set, so real metric names are double-prefixed (`agent_agent_tool_call_total`, etc., with an auto-appended `_total` on metrics whose OTLP name doesn't already end in 'total' — see D-009). Every PromQL example needs the corrected names.",
       "size": "S",
       "priority": 8,
       "status": "pending",
       "tags": ["docs", "bugfix", "metrics-dictionary"]
+    },
+    {
+      "id": "T-010",
+      "title": "Create Grafana dashboards for OTEL metrics and traces",
+      "description": "T-009 deferred dashboard creation ('no starter dashboard per plan constraints'). Build provisioned-via-file Grafana dashboard(s) covering the nine metrics in metrics-dictionary.md (success rate, error breakdown, param issues, duplicate calls, read-before-write violations, retry switches, consecutive errors, session success rate) against the Prometheus datasource, plus a Tempo-backed trace/span exploration view. metrics-dictionary.md already has a suggested 4-row layout (Session Overview / Tool Breakdown / Quality Signals / Selection Patterns) to use as a starting point. Must follow the file-provisioning pattern already used for datasources (assets/grafana-datasources.yaml mounted via docker-compose.yaml) per CLAUDE.md's constraint that UI-only Grafana edits don't survive a container recreate.",
+      "size": "M",
+      "priority": 4,
+      "status": "done",
+      "tags": ["grafana", "dashboards", "observability"]
     }
   ],
 
@@ -146,6 +155,20 @@
       "decision": "Rewrote emit_counter() in lib/common.sh to POST a real OTLP Sum metric (delta temporality, isMonotonic=true) as OTLP/HTTP JSON via curl+jq to ${OTEL_ENDPOINT}/v1/metrics, instead of faking a counter as an otel-cli span. Kept the exact same function signature (name, value, key=val...), so pre_tool_use.sh, post_tool_use.sh, and stop.sh needed zero changes. otel-cli itself is untouched and still handles all tracing (start_span/end_span).",
       "rationale": "Confirmed otel-cli's latest release (v0.4.5, Apr 2024) still has no metrics command — a hoped-for v0.5.0 with metrics/logs support never shipped — ruling out staying within otel-cli. User explicitly chose preserving the exact metric names/shape from metrics-dictionary.md over letting the collector derive different-shaped metrics from spans (e.g. via the spanmetrics connector), which also wouldn't have covered stop.sh's four session-level analysis metrics (they have no corresponding span to derive from). DELTA (not CUMULATIVE) temporality because each hook invocation is a fresh, stateless bash process with no persisted running total. Verified the collector's OTLP/HTTP receiver accepts JSON (not just protobuf) before committing to this approach, and verified full metric content (name/type/temporality/attributes/value) via the debug exporter's detailed verbosity before shipping. One implementation bug caught during testing: jq's --args flag requires the filter immediately after it, with positional args after the filter — putting them before it makes jq try to parse the first positional arg as the filter.",
       "supersedes": null
+    },
+    {
+      "id": "D-009",
+      "date": "2026-08-12",
+      "decision": "Wrote all T-010 dashboard PromQL against the real double-prefixed metric names (e.g. `agent_agent_tool_call_total`) instead of the bare names documented in metrics-dictionary.md, and flagged the doc as stale (folded into T-008's scope) rather than fixing the docs in this session.",
+      "rationale": "Verified live against Prometheus's own label-values API before building dashboard queries: the collector's prometheus exporter config sets `namespace: agent`, and every OTLP metric name already starts with `agent.` — so `agent.tool.call.total` becomes `agent_agent_tool_call_total`, not `agent_tool_call_total` as every example in metrics-dictionary.md shows. Also confirmed the exporter auto-appends `_total` to metrics whose name doesn't already end in 'total' (e.g. `agent.session.success_rate_pct` -> `..._pct_total`). Fixing the docs was out of scope for a dashboard task, so T-008 (already tracking stale docs in this same file) was extended to cover it instead of opening a near-duplicate task.",
+      "supersedes": null
+    },
+    {
+      "id": "D-010",
+      "date": "2026-08-12",
+      "decision": "Added a `delta_to_cumulative` processor to the otel-collector's metrics pipeline (otel-collector-config.yaml), between `attributes` and the `prometheus`/`debug` exporters.",
+      "rationale": "Live-verified while validating T-010's dashboards: emit_counter() sends DELTA-temporality Sums (D-008's explicit choice, since each hook invocation is a stateless process). Fed directly to the Prometheus exporter without conversion, series didn't behave as real cumulative counters — a `tool_name=\"Bash\"` series was observed to exist, then vanish, then get overwritten rather than accumulate, making `rate()`/`increase()` (the query pattern the dashboards and metrics-dictionary.md both depend on) unreliable regardless of correct naming. Confirmed the fix by watching the same counter go from isolated single-sample values to a real monotonically-accumulating series (1 -> 4 across three spaced-out Bash calls) with `increase()` correctly reporting growth, both directly against Prometheus and proxied through Grafana's own datasource API.",
+      "supersedes": null
     }
   ],
 
@@ -198,6 +221,13 @@
       "completed_date": "2026-08-12",
       "session_ref": "S-005",
       "notes": "Executed as a 4-task SDD plan (docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md; design doc at docs/superpowers/specs/2026-08-11-tempo-grafana-migration-design.md). Task 1 (Tempo): hit a real blocker — the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present (commit ab992b8 shipped the spec-faithful-but-broken version; paused for controller/user decision at the session boundary). On resume, user chose to drop the block and accept Tempo's default 336h retention rather than pin an older Tempo version or hunt for a v3.0.0-native retention equivalent (commit 379c49b); retention hardening deferred to a future task. Task 2 (Prometheus, commit 41d206d): collector's prometheus exporter wired into the metrics pipeline, Prometheus container added scraping :8889 every 15s. Task 3 (Grafana, commit f9b33be): datasources auto-provisioned via file (assets/grafana-datasources.yaml), no starter dashboard per plan constraints. All verification used real data through the actual hook lib (start_span/end_span/emit_counter), never synthetic payloads — confirmed via Tempo's /api/search, Prometheus's query API, and Grafana's /api/health + /api/datasources, first per-task and then as a full-stack proof with all four services running together. Also resolved the hardcoded-credential issue found at the start of S-005 as a side effect — the OpenObserve exporter and its Authorization header are gone entirely. The orphaned openobserve container from the earlier proof-of-concept (started via plain docker run, outside this repo's docker-compose.yaml) is still running and still holds port 5080; user can docker stop/rm it once satisfied."
+    },
+    {
+      "id": "T-010",
+      "title": "Create Grafana dashboards for OTEL metrics and traces",
+      "completed_date": "2026-08-12",
+      "session_ref": "S-006",
+      "notes": "Two dashboards, both provisioned via file per user's choice to split metrics and traces rather than combine: 'Agent Tool Metrics' (assets/dashboards/tool-metrics.json, Prometheus, 4-row layout per metrics-dictionary.md's suggestion — dropped the duration box-plot and error-rate heatmap since no duration metric is emitted and Sankey since it needs an unavailable community plugin, substituting panel types the actual counter/gauge-shaped metrics support) and 'Agent Tool Traces' (assets/dashboards/traces.json, Tempo, all-traces/error-spans/slow-calls/session-scoped panels using only span attributes confirmed to actually exist — agent.tool.name, agent.session.id — not the is_retry/is_duplicate attributes T-008 already flagged as fictional). Added explicit `uid: tempo`/`uid: prometheus` to grafana-datasources.yaml so dashboard JSON can reference stable datasource UIDs. New assets/grafana-dashboards-provider.yaml + docker-compose.yaml volume mounts wire the dashboards directory into Grafana's file-provisioning path, matching the existing datasource pattern (CLAUDE.md updated to document it, still 48 lines). Found two real bugs while verifying against live data rather than trusting the docs: (1) every metric name in metrics-dictionary.md's PromQL examples is stale — real names are double-prefixed by the collector's `namespace: agent` exporter setting plus an auto-appended `_total` (D-009; folded into T-008's scope rather than opening a duplicate task); (2) emit_counter()'s DELTA-temporality metrics weren't accumulating correctly through the Prometheus exporter at all — series appeared/vanished/overwrote instead of incrementing, which would have made every increase()/rate() panel unreliable. Fixed by adding a `delta_to_cumulative` processor to the collector's metrics pipeline (D-010). Verified end-to-end post-fix: watched a real Bash-tool counter accumulate 1->4 across three spaced tool calls with correct `increase()` output, both directly against Prometheus and proxied through Grafana's own datasource API, plus confirmed real trace data resolves through Grafana's Tempo proxy."
     }
   ]
 }
@@ -214,8 +244,9 @@
 | T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | pending |
 | T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
 | T-007 | Fix fake-metrics gap: `emit_counter()` never sends real OTLP metrics | M | 7 | done |
-| T-008 | Fix stale TraceQL examples in `metrics-dictionary.md` | S | 8 | pending |
+| T-008 | Fix stale TraceQL/PromQL examples in `metrics-dictionary.md` | S | 8 | pending |
 | T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
+| T-010 | Create Grafana dashboards for OTEL metrics and traces | M | 4 | done |
 
 ## Decisions
 
@@ -227,6 +258,8 @@
 - **D-006** (2026-08-11): Fixed the default OTEL endpoint from port 4317 (gRPC) to 4318 (HTTP) to match `otel-cli`'s `http://` scheme-based protocol selection — traces were silently never reaching the collector.
 - **D-007** (2026-08-11): Replaced the hardcoded absolute path in `.claude/settings.json` with `${CLAUDE_PROJECT_DIR}` and relocated the `hooks.json` template to `assets/` — supersedes D-001, needed for the repo to work after a clone.
 - **D-008** (2026-08-11): Rewrote `emit_counter()` to POST real OTLP `Sum` metrics (delta temporality) via `curl`+`jq` instead of faking counters as `otel-cli` spans — `otel-cli` still has no metrics command as of its latest release (v0.4.5). Zero changes needed to the three call sites since the function signature stayed the same.
+- **D-009** (2026-08-12): Built T-010's dashboards against the real double-prefixed metric names (`agent_agent_tool_call_total`, not `agent_tool_call_total`) — the collector's `namespace: agent` exporter setting doubles up with metric names that already start with `agent.`. `metrics-dictionary.md`'s PromQL examples are all stale on this; folded into T-008 rather than opening a duplicate doc-fix task.
+- **D-010** (2026-08-12): Added a `delta_to_cumulative` processor to the collector's metrics pipeline — D-008's DELTA-temporality counters weren't accumulating correctly through the Prometheus exporter (series appeared/vanished/overwrote instead of incrementing), which would have made every `rate()`/`increase()` query unreliable. Verified fixed by watching a real counter accumulate correctly across spaced tool calls.
 
 ## Completed
 
@@ -237,3 +270,4 @@
 - **T-006** (2026-08-11, S-003): Made hook config portable (D-007), wrote `.gitignore`/`README.md`, and pushed the initial commit to `https://github.com/andrea-spoldi/agent-observability` (main).
 - **T-007** (2026-08-11, S-004): `emit_counter()` now sends real OTLP metrics (D-008) instead of fake spans — verified with detailed collector-log output showing correct name/type/temporality/attributes/value, and confirmed both per-call and session-level (`stop.sh`) metrics land correctly.
 - **T-009** (2026-08-12, S-005): Replaced OpenObserve with Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) via a 4-task SDD plan. Hit and resolved a real Tempo v3.0.0 schema blocker (dropped the brief's `compactor` block, accepted default retention — user's call). Verified end-to-end via real hook-lib span/counter emission queried back from Tempo and Prometheus directly, plus Grafana health/datasource checks, with all four services running together. Commits: `379c49b`, `41d206d`, `f9b33be`.
+- **T-010** (2026-08-12, S-006): Built two provisioned Grafana dashboards — `Agent Tool Metrics` (Prometheus, 4-row layout) and `Agent Tool Traces` (Tempo, session/error/slow-call search). Found and fixed two real pipeline bugs while verifying against live data: metrics-dictionary.md's PromQL examples use stale (non-double-prefixed) metric names (D-009), and DELTA-temporality counters weren't accumulating through the Prometheus exporter at all until a `delta_to_cumulative` processor was added (D-010). Verified end-to-end: real Bash-tool counter accumulating correctly, real traces resolving through Grafana's Tempo proxy.
