@@ -33,12 +33,11 @@ exporters:
   debug:
     verbosity: basic
 
-  # Uncomment for Prometheus scraping
-  # prometheus:
-  #   endpoint: 0.0.0.0:8889
-  #   namespace: agent
-  #   resource_to_telemetry_conversion:
-  #     enabled: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: agent
+    resource_to_telemetry_conversion:
+      enabled: true
 
   # Uncomment for Jaeger
   # otlp/jaeger:
@@ -63,4 +62,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch, attributes]
-      exporters: [debug]
+      exporters: [debug, prometheus]

@@ -5,6 +5,7 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "8889:8889"
     volumes:
          - .claude/skills/agent-observability/assets/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
 
@@ -17,5 +18,14 @@ services:
     ports:
       - "3200:3200"
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - .claude/skills/agent-observability/assets/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
 volumes:
   tempo-data:
+  prometheus-data:
