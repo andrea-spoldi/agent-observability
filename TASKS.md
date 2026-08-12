@@ -7,9 +7,9 @@
   "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-007",
-    "goal": "Fix tool-name mismatch in stop.sh's read-before-write check (T-005)",
-    "task_ref": "T-005",
+    "id": "S-008",
+    "goal": "Fix stale TraceQL/PromQL examples in metrics-dictionary.md (T-008)",
+    "task_ref": "T-008",
     "started": "2026-08-12",
     "status": "done",
     "blocker": null
@@ -86,7 +86,7 @@
       "description": "The 'Trace Queries' section documents queries against span attributes `span.agent.tool.is_retry` and `span.agent.tool.is_duplicate` that are never actually set on any span — retry-switch and duplicate-call detection only ever happens in stop.sh's post-hoc session.jsonl analysis and is only emitted as a metric (agent.tool.retry_switches, agent.tool.duplicate_calls), never as a span attribute on the original tool-call span. Either add the attributes to the relevant spans, or rewrite/remove these TraceQL examples. ALSO (found during T-010): every PromQL example in this file uses bare names like `agent_tool_call_total`, but the collector's prometheus exporter has `namespace: agent` set, so real metric names are double-prefixed (`agent_agent_tool_call_total`, etc., with an auto-appended `_total` on metrics whose OTLP name doesn't already end in 'total' — see D-009). Every PromQL example needs the corrected names.",
       "size": "S",
       "priority": 8,
-      "status": "pending",
+      "status": "done",
       "tags": ["docs", "bugfix", "metrics-dictionary"]
     },
     {
@@ -204,6 +204,13 @@
       "decision": "stop.sh's read-before-write check now uses: Read=read; Edit=write (Claude Code requires a prior Read on the same file before Edit succeeds, so this is a meaningful check); Bash with a `>`/`>>` redirect in its command=write (same string-matching heuristic as before, just fixed to the real tool name); Write=exempt from the check entirely (no naming fix maps to it — it's intentionally excluded).",
       "rationale": "Write in Claude Code is used for both creating brand-new files and overwriting existing ones, and post_tool_use.sh's session-log record has no field distinguishing the two cases. Flagging every Write as a potential violation would mostly catch ordinary new-file creation, not blind edits — so it gets the same exemption the original (fictional-tool-name) code gave 'create_file'. Verified against a synthetic session log covering all four cases (Edit-after-Read, Edit-without-Read, Write-to-new-file, Bash-redirect-to-unread-file): exactly the 2 expected violations fired (Edit-without-Read, Bash-redirect), with Write correctly never appearing in the write-targets set at all.",
       "supersedes": null
+    },
+    {
+      "id": "D-012",
+      "date": "2026-08-12",
+      "decision": "Fixed metrics-dictionary.md's PromQL examples to the real double-prefixed metric names (D-009), corrected its TraceQL session-lookup query from `resource.agent.session.id` to `span.agent.session.id`, and removed the `span.agent.tool.is_retry`/`is_duplicate` TraceQL examples entirely (replaced with a note pointing at the equivalent PromQL metrics) rather than adding those attributes to spans. Also fixed the doc's remaining fictional-tool-name references (`str_replace`/`bash`/`view`/`create_file` in thresholds and common-pattern examples) to match D-011's real names, and fixed the same `resource.` → `span.` bug in T-010's own traces.json dashboard (found by testing the doc's claim empirically, not just trusting it).",
+      "rationale": "Fetched a real trace's raw structure directly from Tempo's API before writing anything — confirmed `agent.session.id`/`agent.tool.name`/`agent.tool.params_hash` are span-level attributes (the resource only carries `service.name`), so the doc's original `resource.agent.session.id` query was wrong, not just the is_retry/is_duplicate ones T-008 originally flagged. Verified `resource.` returns 0 traces and `span.` returns real traces via direct Tempo search on two different session IDs, then re-verified end-to-end through Grafana's own datasource proxy after fixing traces.json. Chose to remove (not implement) the is_retry/is_duplicate attributes: that classification requires seeing calls *after* the one in question, which pre_tool_use.sh cannot know at span-creation time — adding it would mean rearchitecting span creation, out of scope for a docs-accuracy task.",
+      "supersedes": null
     }
   ],
 
@@ -270,6 +277,13 @@
       "completed_date": "2026-08-12",
       "session_ref": "S-007",
       "notes": "Decision (D-011): Read=read, Edit=write (Claude Code enforces a prior Read before Edit, so this check is meaningful), Bash-with-redirect=write (same heuristic as before, just correctly named), Write=exempt (no prior-existence signal in the hook payload to distinguish legitimate new-file creation from a blind overwrite, same treatment the old fictional-tool-name code gave 'create_file'). Also dropped the now-dead 'create_file' skip-loop since Write no longer enters the write-targets set at all. Verified against a synthetic 5-record session log (not the live one, to avoid disrupting hook state mid-session) covering all four cases: Edit-after-Read (no violation), Edit-without-Read (violation), Write-to-new-file (never flagged), Bash-redirect-to-unread-target (violation) — exactly 2 violations fired, matching expectations. Unblocks T-011 and T-012, which depended on the same tool-name mapping decision."
+    },
+    {
+      "id": "T-008",
+      "title": "Fix stale TraceQL/PromQL examples in metrics-dictionary.md",
+      "completed_date": "2026-08-12",
+      "session_ref": "S-008",
+      "notes": "Fixed every PromQL example to the real double-prefixed metric names (D-009), added an explanatory note at the top of the doc so future readers understand why (rather than re-deriving it per-metric). Found and fixed a third, previously-unflagged bug while verifying against a live trace's raw structure: the TraceQL session-lookup query used `resource.agent.session.id`, but agent.session.id is actually a span-level attribute (only service.name is resource-level) — confirmed empirically (0 vs N traces returned) before touching anything, then fixed to `span.agent.session.id` here AND in T-010's traces.json dashboard, which had unknowingly inherited the same bug from trusting this doc. Removed the is_retry/is_duplicate TraceQL examples (D-012: that classification can't exist as a span attribute given how pre_tool_use.sh works) rather than trying to implement the attributes, replacing them with a pointer to the equivalent PromQL metrics. Also cleaned up the doc's remaining fictional-tool-name references (str_replace/bash/view/create_file) to match D-011, and added a short note reconciling the aspirational 'Dashboard Layout Suggestion' section with what T-010 actually built (duration/heatmap/Sankey panels couldn't be implemented as literally suggested). All fixes re-verified against a live collector/Tempo/Grafana stack, not just reasoned about."
     }
   ]
 }
@@ -286,7 +300,7 @@
 | T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | done |
 | T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
 | T-007 | Fix fake-metrics gap: `emit_counter()` never sends real OTLP metrics | M | 7 | done |
-| T-008 | Fix stale TraceQL/PromQL examples in `metrics-dictionary.md` | S | 8 | pending |
+| T-008 | Fix stale TraceQL/PromQL examples in `metrics-dictionary.md` | S | 8 | done |
 | T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
 | T-010 | Create Grafana dashboards for OTEL metrics and traces | M | 4 | done |
 | T-011 | Add Skill Activations section to `stop.sh` | S | 9 | pending |
@@ -306,6 +320,7 @@
 - **D-009** (2026-08-12): Built T-010's dashboards against the real double-prefixed metric names (`agent_agent_tool_call_total`, not `agent_tool_call_total`) — the collector's `namespace: agent` exporter setting doubles up with metric names that already start with `agent.`. `metrics-dictionary.md`'s PromQL examples are all stale on this; folded into T-008 rather than opening a duplicate doc-fix task.
 - **D-010** (2026-08-12): Added a `delta_to_cumulative` processor to the collector's metrics pipeline — D-008's DELTA-temporality counters weren't accumulating correctly through the Prometheus exporter (series appeared/vanished/overwrote instead of incrementing), which would have made every `rate()`/`increase()` query unreliable. Verified fixed by watching a real counter accumulate correctly across spaced tool calls.
 - **D-011** (2026-08-12): `stop.sh`'s read-before-write check now maps `Read`=read, `Edit`=write, `Bash`-with-redirect=write, and exempts `Write` entirely (no signal in the hook payload distinguishes new-file creation from a blind overwrite). Verified against a synthetic 4-case session log — exactly the 2 expected violations fired.
+- **D-012** (2026-08-12): Fixed `metrics-dictionary.md`'s PromQL to the real metric names (D-009) and its TraceQL session query from `resource.agent.session.id` to `span.agent.session.id` — found via a live trace's raw structure that session id is span-level, not resource-level (only `service.name` is resource-level). Same bug existed in T-010's `traces.json`; fixed there too. Removed the fictional `is_retry`/`is_duplicate` TraceQL examples rather than implementing them — that classification needs to see future calls, which `pre_tool_use.sh` can't at span-creation time.
 
 ## Completed
 
@@ -318,3 +333,4 @@
 - **T-009** (2026-08-12, S-005): Replaced OpenObserve with Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) via a 4-task SDD plan. Hit and resolved a real Tempo v3.0.0 schema blocker (dropped the brief's `compactor` block, accepted default retention — user's call). Verified end-to-end via real hook-lib span/counter emission queried back from Tempo and Prometheus directly, plus Grafana health/datasource checks, with all four services running together. Commits: `379c49b`, `41d206d`, `f9b33be`.
 - **T-010** (2026-08-12, S-006): Built two provisioned Grafana dashboards — `Agent Tool Metrics` (Prometheus, 4-row layout) and `Agent Tool Traces` (Tempo, session/error/slow-call search). Found and fixed two real pipeline bugs while verifying against live data: metrics-dictionary.md's PromQL examples use stale (non-double-prefixed) metric names (D-009), and DELTA-temporality counters weren't accumulating through the Prometheus exporter at all until a `delta_to_cumulative` processor was added (D-010). Verified end-to-end: real Bash-tool counter accumulating correctly, real traces resolving through Grafana's Tempo proxy.
 - **T-005** (2026-08-12, S-007): Fixed `stop.sh`'s read-before-write check to use real Claude Code tool names (D-011: `Read`=read, `Edit`=write, `Bash`-redirect=write, `Write`=exempt). Verified against a synthetic session log covering all four cases — correct violations fired. Unblocks T-011/T-012.
+- **T-008** (2026-08-12, S-008): Fixed `metrics-dictionary.md`'s stale PromQL (D-009 naming) and TraceQL. Found a third bug while verifying live — session-id was queried via `resource.` when it's actually a span-level attribute (D-012) — and fixed the same bug in T-010's `traces.json`. Removed the never-real `is_retry`/`is_duplicate` TraceQL examples instead of implementing them. Also cleaned up leftover fictional tool names elsewhere in the doc.

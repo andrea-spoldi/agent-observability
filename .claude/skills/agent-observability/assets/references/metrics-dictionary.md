@@ -3,6 +3,14 @@
 Complete reference for all signals emitted by the agent-observability skill.
 Includes PromQL queries and suggested alert thresholds.
 
+> **Metric naming:** the collector's `prometheus` exporter has `namespace: agent`
+> set (see `otel-collector-config.yaml`), and every OTLP metric name below
+> already starts with `agent.` — so the real Prometheus name is double-prefixed
+> (e.g. `agent.tool.call.total` → `agent_agent_tool_call_total`), with `_total`
+> auto-appended to any name that doesn't already end in it. All PromQL examples
+> below use the real, double-prefixed names — verified live against a running
+> collector, not just derived from the naming rule.
+
 ## Quick Reference
 
 | Metric | Type | What it tells you |
@@ -15,7 +23,13 @@ Includes PromQL queries and suggested alert thresholds.
 | `agent.tool.read_before_write_violations` | Counter | Blind edits without prior read |
 | `agent.tool.retry_switches` | Counter | Wrong-tool-then-correct patterns |
 | `agent.tool.consecutive_errors` | Counter | Persistent misselection |
-| `agent.session.success_rate_pct` | Gauge | Overall session health (0-100) |
+| `agent.session.success_rate_pct` | Counter* | Overall session health (0-100) |
+
+\* Emitted via `emit_counter()` as a DELTA-temporality Sum, not a true OTLP
+gauge — each `stop.sh` run adds one session's rate as a delta, which
+Prometheus accumulates into an ever-increasing counter. There's no
+instantaneous "current value" to read; query it with `increase(...[range])`
+over a range narrow enough to capture one session, not a bare instant query.
 
 ## Detailed Metrics
 
@@ -29,19 +43,19 @@ Labels: `tool_name`, `outcome` (success | error)
 
 ```promql
 # Success rate per tool (last 1h)
-sum(rate(agent_tool_call_total{outcome="success"}[1h])) by (tool_name)
+sum(rate(agent_agent_tool_call_total{outcome="success"}[1h])) by (tool_name)
 /
-sum(rate(agent_tool_call_total[1h])) by (tool_name)
+sum(rate(agent_agent_tool_call_total[1h])) by (tool_name)
 
 # Overall success rate
 1 - (
-  sum(rate(agent_tool_call_total{outcome="error"}[1h]))
+  sum(rate(agent_agent_tool_call_total{outcome="error"}[1h]))
   /
-  sum(rate(agent_tool_call_total[1h]))
+  sum(rate(agent_agent_tool_call_total[1h]))
 )
 
 # Most error-prone tools
-topk(5, sum by (tool_name) (rate(agent_tool_call_total{outcome="error"}[1h])))
+topk(5, sum by (tool_name) (rate(agent_agent_tool_call_total{outcome="error"}[1h])))
 ```
 
 **Thresholds:**
@@ -57,10 +71,10 @@ Labels: `tool_name`, `error_type` (permission_denied | file_not_found | command_
 
 ```promql
 # Error distribution
-sum by (error_type) (rate(agent_tool_call_error_total[1h]))
+sum by (error_type) (rate(agent_agent_tool_call_error_total[1h]))
 
 # File-not-found errors specifically (often indicates hallucinated paths)
-sum(rate(agent_tool_call_error_total{error_type="file_not_found"}[1h]))
+sum(rate(agent_agent_tool_call_error_total{error_type="file_not_found"}[1h]))
 ```
 
 ### Tool Call Precision
@@ -73,13 +87,13 @@ Labels: `tool_name`, `issue_type` (empty_value | null_value | path_not_found | s
 
 ```promql
 # Issue rate per tool
-sum by (tool_name) (rate(agent_tool_params_issues[1h]))
+sum by (tool_name) (rate(agent_agent_tool_params_issues_total[1h]))
 
 # Suspicious params (placeholder hallucinations)
-sum(rate(agent_tool_params_issues{issue_type="suspicious_param"}[1h]))
+sum(rate(agent_agent_tool_params_issues_total{issue_type="suspicious_param"}[1h]))
 
 # Which fields are problematic
-topk(10, sum by (field, issue_type) (agent_tool_params_issues))
+topk(10, sum by (field, issue_type) (agent_agent_tool_params_issues_total))
 ```
 
 **Thresholds:**
@@ -98,10 +112,10 @@ Labels: `tool_name`, `session_id`
 
 ```promql
 # Average duplicates per session
-avg(agent_tool_duplicate_calls)
+avg(agent_agent_tool_duplicate_calls_total)
 
 # Tools with most duplication
-topk(5, sum by (tool_name) (agent_tool_duplicate_calls))
+topk(5, sum by (tool_name) (agent_agent_tool_duplicate_calls_total))
 ```
 
 **Common causes:**
@@ -111,22 +125,24 @@ topk(5, sum by (tool_name) (agent_tool_duplicate_calls))
 
 #### `agent.tool.read_before_write_violations`
 
-Write operations (str_replace, bash with redirect) that target a file the
-agent never read in this session. Indicates blind editing — the agent is
-modifying a file based on assumption rather than observation.
+Write operations (`Edit`, `Bash` with a redirect) that target a file the
+agent never read in this session. `Write` is intentionally excluded from
+this check — it's used for both creating brand-new files and overwriting
+existing ones, and nothing in the hook payload distinguishes the two, so
+flagging it would mostly catch legitimate new-file creation.
 
 Labels: `session_id`
 
 ```promql
 # Violation rate per session
-agent_tool_read_before_write_violations
+agent_agent_tool_read_before_write_violations_total
 
 # Average violations
-avg(agent_tool_read_before_write_violations)
+avg(agent_agent_tool_read_before_write_violations_total)
 ```
 
 **Thresholds:**
-- Healthy: 0-1 per session (occasional create_file is fine)
+- Healthy: 0-1 per session (occasional new-file `Write` is fine)
 - Warning: 2-3
 - Critical: > 3 (agent is editing blind)
 
@@ -141,16 +157,16 @@ Labels: `from_tool`, `to_tool`, `session_id`
 
 ```promql
 # Most common wrong-choice patterns
-topk(10, sum by (from_tool, to_tool) (agent_tool_retry_switches))
+topk(10, sum by (from_tool, to_tool) (agent_agent_tool_retry_switches_total))
 
 # Total selection errors per session
-sum by (session_id) (agent_tool_retry_switches)
+sum by (session_id) (agent_agent_tool_retry_switches_total)
 ```
 
 **Common patterns:**
-- `bash` → `str_replace`: tried a sed command when str_replace was better
-- `str_replace` → `bash`: edit was too complex for str_replace
-- `view` → `bash cat`: view failed on binary file
+- `Bash` → `Edit`: tried a sed command when Edit was better
+- `Edit` → `Bash`: change was too complex for Edit
+- `Read` → `Bash`: Read failed (e.g. binary file), fell back to `cat`
 
 #### `agent.tool.consecutive_errors`
 
@@ -161,7 +177,7 @@ Labels: `tool_name`, `session_id`
 
 ```promql
 # Tools the agent gets stuck on
-sum by (tool_name) (agent_tool_consecutive_errors)
+sum by (tool_name) (agent_agent_tool_consecutive_errors_total)
 ```
 
 **Thresholds:**
@@ -173,19 +189,34 @@ sum by (tool_name) (agent_tool_consecutive_errors)
 
 ```traceql
 # Find all error spans in a session
-{ resource.agent.session.id = "<session-id>" && status = error }
-
-# Find retry switches
-{ span.agent.tool.is_retry = true }
-
-# Find duplicate calls
-{ span.agent.tool.is_duplicate = true }
+{ span.agent.session.id = "<session-id>" && status = error }
 
 # Slow tool calls (> 5s)
 { span.agent.tool.name != "" && duration > 5s }
 ```
 
+`agent.session.id`, `agent.tool.name`, and `agent.tool.params_hash` are
+span-level attributes (verified against a live trace's raw structure) — use
+`span.`, not `resource.`; the resource only carries `service.name`.
+
+Retry-switch and duplicate-call detection do **not** have a TraceQL
+equivalent — that classification only happens post-hoc in `stop.sh`'s
+`session.jsonl` analysis, after the session ends, and is emitted only as a
+metric (`agent.tool.retry_switches`, `agent.tool.duplicate_calls`), never as
+an attribute on the originating span. There's no way for `pre_tool_use.sh`
+to know at span-creation time whether a call will turn out to be a retry or
+a duplicate — that requires seeing later calls too. Use the PromQL examples
+above for these instead.
+
 ## Dashboard Layout Suggestion
+
+Implemented in `assets/dashboards/tool-metrics.json` and
+`assets/dashboards/traces.json` (see CLAUDE.md's Grafana provisioning
+notes), with some deviations from the original sketch below: no duration
+metric is emitted (only counters/gauges), so the box-plot panel was dropped;
+the error-rate heatmap became a bar gauge (no histogram-shaped metric to
+bucket); the retry-switch Sankey diagram became a table (needs a community
+plugin not present in the base `grafana/grafana` image).
 
 **Row 1 — Session Overview**
 - Success rate gauge (current session)

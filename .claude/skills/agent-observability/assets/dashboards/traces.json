@@ -43,10 +43,10 @@
     {
       "type": "traces",
       "title": "Traces for Session ($session_id)",
-      "description": "Fill in the session_id variable above (matches agent.session.id, set on every span by common.sh's start_span). Empty by default — shows no results until a session ID is entered.",
+      "description": "Fill in the session_id variable above (matches agent.session.id, a span-level attribute set on every span by common.sh's start_span). Empty by default — shows no results until a session ID is entered.",
       "gridPos": { "x": 0, "y": 20, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
-      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ resource.agent.session.id = \"$session_id\" }", "refId": "A" }]
+      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.agent.session.id = \"$session_id\" }", "refId": "A" }]
     }
   ]
 }
