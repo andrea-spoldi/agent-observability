@@ -7,8 +7,9 @@
 #   2. Detect read-before-write violations (efficiency)
 #   3. Detect retry switches (selection accuracy)
 #   4. Detect consecutive errors (selection accuracy)
-#   5. Emit summary metrics
-#   6. Archive session log
+#   5. Detect skill activations (usage)
+#   6. Emit summary metrics
+#   7. Archive session log
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -153,7 +154,32 @@ echo "${CONSEC}" | jq -r '.[] | [.tool, (.count|tostring)] | join("|")' 2>/dev/n
   done
 
 # ---------------------------------------------------------------------------
-# 5. Session-level summary metrics
+# 5. Skill activations
+# ---------------------------------------------------------------------------
+# The Skill tool's input has no path/file/command field, so post_tool_use.sh
+# falls back to .skill for its target — target IS the skill name here, no
+# path parsing needed (unlike the original proposal, which assumed skill
+# activation showed up as a Read of a SKILL.md file; it doesn't in this
+# harness — Skill is its own tool).
+SKILL_TARGETS="$(jq -r '
+  select(.tool == "Skill" and .target != "") | .target
+' "${OTEL_SESSION_LOG}" 2>/dev/null)"
+
+if [[ -n "${SKILL_TARGETS}" ]]; then
+  echo "${SKILL_TARGETS}" | sort | uniq -c | while read -r count skill; do
+    emit_counter "agent.skill.activation" "${count}" \
+      "skill_name=${skill}" \
+      "session_id=${SESSION_ID}"
+    log_debug "  skill activation: ${skill} x${count}"
+  done
+
+  DISTINCT_SKILLS="$(echo "${SKILL_TARGETS}" | sort -u | wc -l | tr -d ' ')"
+  emit_counter "agent.skill.activations_per_session" "${DISTINCT_SKILLS}" \
+    "session_id=${SESSION_ID}"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Session-level summary metrics
 # ---------------------------------------------------------------------------
 emit_counter "agent.tool.calls_per_session" "${TOTAL_CALLS}" \
   "session_id=${SESSION_ID}"
@@ -168,7 +194,7 @@ if (( TOTAL_CALLS > 0 )); then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Archive session log
+# 7. Archive session log
 # ---------------------------------------------------------------------------
 ARCHIVE_DIR="${OTEL_SESSION_DIR}/archive"
 mkdir -p "${ARCHIVE_DIR}"

@@ -7,10 +7,10 @@
   "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-008",
-    "goal": "Fix stale TraceQL/PromQL examples in metrics-dictionary.md (T-008)",
-    "task_ref": "T-008",
-    "started": "2026-08-12",
+    "id": "S-010",
+    "goal": "Fix empty Traces dashboard (T-010 regression: wrong panel type)",
+    "task_ref": "T-010",
+    "started": "2026-08-13",
     "status": "done",
     "blocker": null
   },
@@ -104,7 +104,7 @@
       "description": "From stop-sh-changes.md (untracked proposal doc at repo root, never implemented — grepped stop.sh to confirm none of this exists yet). Scan the session log for Read calls whose target matches `.claude/skills/.*/SKILL.md` or `/mnt/skills/.*/SKILL.md`, extract the skill name, emit `agent.skill.activation` (counter per skill name) and `agent.skill.activations_per_session` (total distinct skills activated). T-005 (resolved 2026-08-12, D-011) confirmed the real tool name for this is `Read`, not the doc's `view` — use that.",
       "size": "S",
       "priority": 9,
-      "status": "pending",
+      "status": "done",
       "tags": ["hooks", "feature", "stop.sh", "metrics"]
     },
     {
@@ -211,6 +211,20 @@
       "decision": "Fixed metrics-dictionary.md's PromQL examples to the real double-prefixed metric names (D-009), corrected its TraceQL session-lookup query from `resource.agent.session.id` to `span.agent.session.id`, and removed the `span.agent.tool.is_retry`/`is_duplicate` TraceQL examples entirely (replaced with a note pointing at the equivalent PromQL metrics) rather than adding those attributes to spans. Also fixed the doc's remaining fictional-tool-name references (`str_replace`/`bash`/`view`/`create_file` in thresholds and common-pattern examples) to match D-011's real names, and fixed the same `resource.` → `span.` bug in T-010's own traces.json dashboard (found by testing the doc's claim empirically, not just trusting it).",
       "rationale": "Fetched a real trace's raw structure directly from Tempo's API before writing anything — confirmed `agent.session.id`/`agent.tool.name`/`agent.tool.params_hash` are span-level attributes (the resource only carries `service.name`), so the doc's original `resource.agent.session.id` query was wrong, not just the is_retry/is_duplicate ones T-008 originally flagged. Verified `resource.` returns 0 traces and `span.` returns real traces via direct Tempo search on two different session IDs, then re-verified end-to-end through Grafana's own datasource proxy after fixing traces.json. Chose to remove (not implement) the is_retry/is_duplicate attributes: that classification requires seeing calls *after* the one in question, which pre_tool_use.sh cannot know at span-creation time — adding it would mean rearchitecting span creation, out of scope for a docs-accuracy task.",
       "supersedes": null
+    },
+    {
+      "id": "D-013",
+      "date": "2026-08-12",
+      "decision": "Implemented T-011's Skill Activations section against the real `Skill` tool (tool_name==\"Skill\", target==skill name) instead of the proposal doc's approach (detecting a Read of a SKILL.md path). Required a small upstream fix first: added `.skill` to post_tool_use.sh's TARGET-extraction fallback chain (`.path // .file // .file_path // .filepath // .command // .skill`), since the Skill tool's input has none of the existing fallback fields and target was landing as empty string on every real Skill record.",
+      "rationale": "Checked real archived session-log records for tool==\"Skill\" before writing any stop.sh code (same discipline as D-010/D-011's live-data verification) — found 4 real Skill invocations, every one with target==\"\". The proposal doc's premise (skill activation = a Read of `.claude/skills/.*/SKILL.md`) doesn't hold in this harness: skill invocation goes through a dedicated Skill tool, not a file read, the same category of doc/reality mismatch T-005 fixed for tool names. Fixing target-extraction upstream is smaller and more correct than working around it in stop.sh, and it simplifies the stop.sh side too — target already IS the skill name, no path-parsing/sed needed as the original doc assumed. Verified both the extraction (`.skill` fallback resolves correctly, doesn't affect existing Read/Edit/Bash extraction) and the aggregation logic (per-skill counts, distinct-skill count) against synthetic data before considering it done.",
+      "supersedes": null
+    },
+    {
+      "id": "D-014",
+      "date": "2026-08-13",
+      "decision": "Changed all four panels in traces.json from `\"type\": \"traces\"` to `\"type\": \"table\"`.",
+      "rationale": "User reported the Traces dashboard looked empty. Investigated in a real browser (not just curl) — Grafana's panel menu > Inspect > Data confirmed the query WAS returning full real trace data (15+ rows), and the panel editor's 'Table view' raw-data toggle rendered it correctly, but the actual 'Traces' panel visualization showed 'No data found in response' regardless. Root cause: the `traces` panel type renders a single trace's span waterfall, not a list of search results — it can't consume the multi-trace list shape Tempo's TraceQL search returns for a query like `{}`. Confirmed the fix live in Grafana's panel editor (switching one panel's visualization to 'Table' — Grafana's own top-recommended suggestion — rendered it correctly with clickable trace-ID links) before editing the source JSON, and re-verified all four panels post-fix, including the session-scoped one with a real live session ID.",
+      "supersedes": null
     }
   ],
 
@@ -284,6 +298,20 @@
       "completed_date": "2026-08-12",
       "session_ref": "S-008",
       "notes": "Fixed every PromQL example to the real double-prefixed metric names (D-009), added an explanatory note at the top of the doc so future readers understand why (rather than re-deriving it per-metric). Found and fixed a third, previously-unflagged bug while verifying against a live trace's raw structure: the TraceQL session-lookup query used `resource.agent.session.id`, but agent.session.id is actually a span-level attribute (only service.name is resource-level) — confirmed empirically (0 vs N traces returned) before touching anything, then fixed to `span.agent.session.id` here AND in T-010's traces.json dashboard, which had unknowingly inherited the same bug from trusting this doc. Removed the is_retry/is_duplicate TraceQL examples (D-012: that classification can't exist as a span attribute given how pre_tool_use.sh works) rather than trying to implement the attributes, replacing them with a pointer to the equivalent PromQL metrics. Also cleaned up the doc's remaining fictional-tool-name references (str_replace/bash/view/create_file) to match D-011, and added a short note reconciling the aspirational 'Dashboard Layout Suggestion' section with what T-010 actually built (duration/heatmap/Sankey panels couldn't be implemented as literally suggested). All fixes re-verified against a live collector/Tempo/Grafana stack, not just reasoned about."
+    },
+    {
+      "id": "T-011",
+      "title": "Add Skill Activations section to stop.sh",
+      "completed_date": "2026-08-12",
+      "session_ref": "S-009",
+      "notes": "Implemented against the real `Skill` tool rather than the proposal doc's Read-of-SKILL.md approach — checked archived session-log records first and found skill invocations go through their own dedicated tool, not a file read, with target always empty on those records (D-013). Fixed by adding `.skill` to post_tool_use.sh's target-extraction fallback chain, which made target equal the skill name directly and simplified stop.sh's implementation (no path-parsing needed, unlike the original proposal). New Section 5 in stop.sh (renumbered: summary metrics 5→6, archive 6→7; header comment updated) emits `agent.skill.activation` per skill name (real per-invocation counts, not just presence — a skill invoked twice shows count=2) and `agent.skill.activations_per_session` (distinct skill count). Verified both the extraction fix and the aggregation logic against synthetic data: 2 distinct skills, one invoked twice, correctly produced activation counts of 2 and 1, and a distinct-count of 2."
+    },
+    {
+      "id": "T-010 (regression fix)",
+      "title": "Fix empty Traces dashboard — wrong panel type",
+      "completed_date": "2026-08-13",
+      "session_ref": "S-010",
+      "notes": "User reported the Traces dashboard looked empty. T-010's original verification had only checked the datasource proxy API returned data (curl), never actually loaded the dashboard in a browser — that gap is exactly why this shipped unnoticed. This time investigated in a real browser: Grafana's panel Inspect > Data confirmed the query WAS returning full real data, and the panel editor's raw 'Table view' toggle rendered it fine, but the panel's actual visualization still said 'No data found in response'. Root cause (D-014): all four panels used `\"type\": \"traces\"`, which renders a single trace's span waterfall — it can't display a multi-trace search-result list, which is what every query in this dashboard returns. Confirmed the fix live in Grafana's panel editor first (switched to Grafana's own top-suggested 'Table' visualization, saw it render correctly with clickable trace-ID links) before editing traces.json, then redeployed and re-verified all four panels in-browser, including the session-scoped one filtered to a real live session ID."
     }
   ]
 }
@@ -303,7 +331,7 @@
 | T-008 | Fix stale TraceQL/PromQL examples in `metrics-dictionary.md` | S | 8 | done |
 | T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
 | T-010 | Create Grafana dashboards for OTEL metrics and traces | M | 4 | done |
-| T-011 | Add Skill Activations section to `stop.sh` | S | 9 | pending |
+| T-011 | Add Skill Activations section to `stop.sh` | S | 9 | done |
 | T-012 | Add Task Decomposition Efficiency section to `stop.sh` | M | 10 | pending |
 | T-013 | Add Agent Robustness (error recovery) section to `stop.sh` | M | 11 | pending |
 
@@ -321,6 +349,8 @@
 - **D-010** (2026-08-12): Added a `delta_to_cumulative` processor to the collector's metrics pipeline — D-008's DELTA-temporality counters weren't accumulating correctly through the Prometheus exporter (series appeared/vanished/overwrote instead of incrementing), which would have made every `rate()`/`increase()` query unreliable. Verified fixed by watching a real counter accumulate correctly across spaced tool calls.
 - **D-011** (2026-08-12): `stop.sh`'s read-before-write check now maps `Read`=read, `Edit`=write, `Bash`-with-redirect=write, and exempts `Write` entirely (no signal in the hook payload distinguishes new-file creation from a blind overwrite). Verified against a synthetic 4-case session log — exactly the 2 expected violations fired.
 - **D-012** (2026-08-12): Fixed `metrics-dictionary.md`'s PromQL to the real metric names (D-009) and its TraceQL session query from `resource.agent.session.id` to `span.agent.session.id` — found via a live trace's raw structure that session id is span-level, not resource-level (only `service.name` is resource-level). Same bug existed in T-010's `traces.json`; fixed there too. Removed the fictional `is_retry`/`is_duplicate` TraceQL examples rather than implementing them — that classification needs to see future calls, which `pre_tool_use.sh` can't at span-creation time.
+- **D-013** (2026-08-12): Skill activation detection uses the real `Skill` tool (target==skill name, via a new `.skill` fallback in `post_tool_use.sh`'s target-extraction), not the proposal doc's Read-of-SKILL.md approach — checked real archived session logs first and found every `Skill` record had an empty target, since skill invocation is its own tool in this harness, not a file read.
+- **D-014** (2026-08-13): Traces dashboard's 4 panels switched from `\"type\": \"traces\"` to `\"type\": \"table\"` — the `traces` panel type renders one trace's span waterfall, not a multi-trace search-result list, which is what every panel's query actually returns. Found by loading the dashboard in a real browser (T-010's original verification never had) and confirmed via Grafana's own Inspect > Data and panel-editor visualization switcher before touching the source file.
 
 ## Completed
 
@@ -334,3 +364,5 @@
 - **T-010** (2026-08-12, S-006): Built two provisioned Grafana dashboards — `Agent Tool Metrics` (Prometheus, 4-row layout) and `Agent Tool Traces` (Tempo, session/error/slow-call search). Found and fixed two real pipeline bugs while verifying against live data: metrics-dictionary.md's PromQL examples use stale (non-double-prefixed) metric names (D-009), and DELTA-temporality counters weren't accumulating through the Prometheus exporter at all until a `delta_to_cumulative` processor was added (D-010). Verified end-to-end: real Bash-tool counter accumulating correctly, real traces resolving through Grafana's Tempo proxy.
 - **T-005** (2026-08-12, S-007): Fixed `stop.sh`'s read-before-write check to use real Claude Code tool names (D-011: `Read`=read, `Edit`=write, `Bash`-redirect=write, `Write`=exempt). Verified against a synthetic session log covering all four cases — correct violations fired. Unblocks T-011/T-012.
 - **T-008** (2026-08-12, S-008): Fixed `metrics-dictionary.md`'s stale PromQL (D-009 naming) and TraceQL. Found a third bug while verifying live — session-id was queried via `resource.` when it's actually a span-level attribute (D-012) — and fixed the same bug in T-010's `traces.json`. Removed the never-real `is_retry`/`is_duplicate` TraceQL examples instead of implementing them. Also cleaned up leftover fictional tool names elsewhere in the doc.
+- **T-011** (2026-08-12, S-009): Added Skill Activations to `stop.sh`, but not as the proposal doc described — found real Skill invocations always had an empty target, since skill activation is its own tool here, not a Read of SKILL.md (D-013). Fixed target-extraction upstream in `post_tool_use.sh` first, which also simplified the stop.sh side. Verified against synthetic data: correct per-skill and distinct-skill counts.
+- **T-010 regression fix** (2026-08-13, S-010): Traces dashboard looked empty to the user despite T-010's earlier API-level verification passing — the gap was never loading it in an actual browser. Root cause: wrong panel type (D-014, `traces` vs `table`). Fixed and re-verified all 4 panels in-browser with real data, including the session-scoped filter.

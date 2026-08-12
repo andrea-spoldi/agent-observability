@@ -97,9 +97,10 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Append to session log (for stop.sh analysis)
 # ---------------------------------------------------------------------------
-# Extract a target file/path if present — used for efficiency/selection analysis
+# Extract a target file/path if present — used for efficiency/selection analysis.
+# .skill covers the Skill tool, whose input has no path/file/command field.
 TARGET="$(echo "${TOOL_INPUT}" | jq -r '
-  (.path // .file // .file_path // .filepath // .command // "") | tostring | .[0:200]
+  (.path // .file // .file_path // .filepath // .command // .skill // "") | tostring | .[0:200]
 ' 2>/dev/null || echo "")"
 
 RECORD="$(jq -n \
