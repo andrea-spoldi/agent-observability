@@ -20,28 +20,28 @@
   },
   "panels": [
     {
-      "type": "traces",
+      "type": "table",
       "title": "All Recent Traces",
       "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{}", "refId": "A" }]
     },
     {
-      "type": "traces",
+      "type": "table",
       "title": "Error Spans",
       "gridPos": { "x": 0, "y": 10, "w": 12, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ status = error }", "refId": "A" }]
     },
     {
-      "type": "traces",
+      "type": "table",
       "title": "Slow Tool Calls (> 5s)",
       "gridPos": { "x": 12, "y": 10, "w": 12, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ duration > 5s }", "refId": "A" }]
     },
     {
-      "type": "traces",
+      "type": "table",
       "title": "Traces for Session ($session_id)",
       "description": "Fill in the session_id variable above (matches agent.session.id, a span-level attribute set on every span by common.sh's start_span). Empty by default — shows no results until a session ID is entered.",
       "gridPos": { "x": 0, "y": 20, "w": 24, "h": 10 },
