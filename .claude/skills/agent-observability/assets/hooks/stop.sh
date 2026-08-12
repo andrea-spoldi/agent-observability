@@ -53,30 +53,30 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Read-before-write violations
 # ---------------------------------------------------------------------------
-# Write tools: str_replace, create_file, bash (with > or >> in command)
-# Read tools: view, cat (via bash)
+# Write tools: Edit (Claude Code's own contract requires a prior Read on the
+#   same file before Edit will succeed, so a violation here is meaningful),
+#   Bash (with > or >> in its command). Write is intentionally excluded: it's
+#   the tool for creating brand-new files as much as overwriting existing
+#   ones, and nothing in the hook payload distinguishes the two — flagging it
+#   would mostly catch legitimate new-file creation, not blind edits.
+# Read tools: Read
 # A violation: write to a path with no prior read of that path in the session
 
 WRITE_TARGETS="$(jq -r '
   select(
-    .tool == "str_replace" or
-    .tool == "create_file" or
-    (.tool == "bash_tool" and (.target | test("[>]")))
+    .tool == "Edit" or
+    (.tool == "Bash" and (.target | test("[>]")))
   ) | .target
 ' "${OTEL_SESSION_LOG}" 2>/dev/null | sort -u)"
 
 READ_TARGETS="$(jq -r '
-  select(.tool == "view") | .target
+  select(.tool == "Read") | .target
 ' "${OTEL_SESSION_LOG}" 2>/dev/null | sort -u)"
 
 VIOLATIONS=0
 if [[ -n "${WRITE_TARGETS}" ]]; then
   while IFS= read -r wpath; do
     [[ -z "${wpath}" ]] && continue
-    # create_file legitimately writes to new paths — skip it
-    is_create="$(jq -r "select(.tool==\"create_file\" and .target==\"${wpath}\") | .tool" \
-      "${OTEL_SESSION_LOG}" 2>/dev/null | head -1)"
-    [[ -n "${is_create}" ]] && continue
 
     if ! echo "${READ_TARGETS}" | grep -qF "${wpath}"; then
       VIOLATIONS=$(( VIOLATIONS + 1 ))

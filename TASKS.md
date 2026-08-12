@@ -7,9 +7,9 @@
   "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-006",
-    "goal": "Create Grafana dashboards for OTEL metrics (Prometheus) and traces (Tempo)",
-    "task_ref": "T-010",
+    "id": "S-007",
+    "goal": "Fix tool-name mismatch in stop.sh's read-before-write check (T-005)",
+    "task_ref": "T-005",
     "started": "2026-08-12",
     "status": "done",
     "blocker": null
@@ -58,8 +58,9 @@
       "description": "stop.sh's read-before-write violation detector (assets/hooks/stop.sh lines ~60-70) matches against tool names 'bash_tool', 'view', 'str_replace', 'create_file' — none of which are real Claude Code tool names (actual: 'Bash', 'Read', 'Edit', 'Write'). The check can never fire in this harness. Needs a decision on the right Claude Code tool → read/write mapping (e.g. Read=read, Edit/Write=write, Bash treated how?) before fixing.",
       "size": "S",
       "priority": 5,
-      "status": "pending",
-      "tags": ["hooks", "bugfix", "stop.sh"]
+      "status": "done",
+      "tags": ["hooks", "bugfix", "stop.sh"],
+      "blocks": ["T-011", "T-012", "T-013"]
     },
     {
       "id": "T-006",
@@ -96,6 +97,33 @@
       "priority": 4,
       "status": "done",
       "tags": ["grafana", "dashboards", "observability"]
+    },
+    {
+      "id": "T-011",
+      "title": "Add Skill Activations section to stop.sh",
+      "description": "From stop-sh-changes.md (untracked proposal doc at repo root, never implemented — grepped stop.sh to confirm none of this exists yet). Scan the session log for Read calls whose target matches `.claude/skills/.*/SKILL.md` or `/mnt/skills/.*/SKILL.md`, extract the skill name, emit `agent.skill.activation` (counter per skill name) and `agent.skill.activations_per_session` (total distinct skills activated). T-005 (resolved 2026-08-12, D-011) confirmed the real tool name for this is `Read`, not the doc's `view` — use that.",
+      "size": "S",
+      "priority": 9,
+      "status": "pending",
+      "tags": ["hooks", "feature", "stop.sh", "metrics"]
+    },
+    {
+      "id": "T-012",
+      "title": "Add Task Decomposition Efficiency section to stop.sh",
+      "description": "From stop-sh-changes.md (untracked proposal doc at repo root, never implemented). Classify each tool call into a phase (read/write/execute/other), count 'bursts' of consecutive same-phase calls, emit `agent.decomposition.burst_count`, `agent.decomposition.avg_burst_size_x10` (x10 to avoid float issues in counter emission), `agent.decomposition.max_burst_size`, `agent.decomposition.productive_ratio_pct`. T-005 (resolved 2026-08-12, D-011) settled the tool-name mapping this phase classification should reuse: Read=read, Edit=write, Bash(redirect)=write, Write=exempt/other — the doc's phase table used fictional names ('view'/'str_replace'/'create_file'/'bash_tool').",
+      "size": "M",
+      "priority": 10,
+      "status": "pending",
+      "tags": ["hooks", "feature", "stop.sh", "metrics"]
+    },
+    {
+      "id": "T-013",
+      "title": "Add Agent Robustness (error recovery) section to stop.sh",
+      "description": "From stop-sh-changes.md (untracked proposal doc at repo root, never implemented). For each error with a non-empty target, look ahead up to 3 calls for a success on the same target and classify as 'recovered'. Emit `agent.robustness.score_pct` (recovered/total, defaults to 100 if zero errors), `agent.robustness.recovered`, `agent.robustness.unrecovered`. Doc includes a dry-run validation against a synthetic 10-call log (33% recovery score) that can seed a real test case. Not directly blocked on T-005 (doesn't depend on the read/write/execute phase mapping), but should land after it for consistency with T-011/T-012's tool-name handling in the same file.",
+      "size": "M",
+      "priority": 11,
+      "status": "pending",
+      "tags": ["hooks", "feature", "stop.sh", "metrics"]
     }
   ],
 
@@ -169,6 +197,13 @@
       "decision": "Added a `delta_to_cumulative` processor to the otel-collector's metrics pipeline (otel-collector-config.yaml), between `attributes` and the `prometheus`/`debug` exporters.",
       "rationale": "Live-verified while validating T-010's dashboards: emit_counter() sends DELTA-temporality Sums (D-008's explicit choice, since each hook invocation is a stateless process). Fed directly to the Prometheus exporter without conversion, series didn't behave as real cumulative counters — a `tool_name=\"Bash\"` series was observed to exist, then vanish, then get overwritten rather than accumulate, making `rate()`/`increase()` (the query pattern the dashboards and metrics-dictionary.md both depend on) unreliable regardless of correct naming. Confirmed the fix by watching the same counter go from isolated single-sample values to a real monotonically-accumulating series (1 -> 4 across three spaced-out Bash calls) with `increase()` correctly reporting growth, both directly against Prometheus and proxied through Grafana's own datasource API.",
       "supersedes": null
+    },
+    {
+      "id": "D-011",
+      "date": "2026-08-12",
+      "decision": "stop.sh's read-before-write check now uses: Read=read; Edit=write (Claude Code requires a prior Read on the same file before Edit succeeds, so this is a meaningful check); Bash with a `>`/`>>` redirect in its command=write (same string-matching heuristic as before, just fixed to the real tool name); Write=exempt from the check entirely (no naming fix maps to it — it's intentionally excluded).",
+      "rationale": "Write in Claude Code is used for both creating brand-new files and overwriting existing ones, and post_tool_use.sh's session-log record has no field distinguishing the two cases. Flagging every Write as a potential violation would mostly catch ordinary new-file creation, not blind edits — so it gets the same exemption the original (fictional-tool-name) code gave 'create_file'. Verified against a synthetic session log covering all four cases (Edit-after-Read, Edit-without-Read, Write-to-new-file, Bash-redirect-to-unread-file): exactly the 2 expected violations fired (Edit-without-Read, Bash-redirect), with Write correctly never appearing in the write-targets set at all.",
+      "supersedes": null
     }
   ],
 
@@ -228,6 +263,13 @@
       "completed_date": "2026-08-12",
       "session_ref": "S-006",
       "notes": "Two dashboards, both provisioned via file per user's choice to split metrics and traces rather than combine: 'Agent Tool Metrics' (assets/dashboards/tool-metrics.json, Prometheus, 4-row layout per metrics-dictionary.md's suggestion — dropped the duration box-plot and error-rate heatmap since no duration metric is emitted and Sankey since it needs an unavailable community plugin, substituting panel types the actual counter/gauge-shaped metrics support) and 'Agent Tool Traces' (assets/dashboards/traces.json, Tempo, all-traces/error-spans/slow-calls/session-scoped panels using only span attributes confirmed to actually exist — agent.tool.name, agent.session.id — not the is_retry/is_duplicate attributes T-008 already flagged as fictional). Added explicit `uid: tempo`/`uid: prometheus` to grafana-datasources.yaml so dashboard JSON can reference stable datasource UIDs. New assets/grafana-dashboards-provider.yaml + docker-compose.yaml volume mounts wire the dashboards directory into Grafana's file-provisioning path, matching the existing datasource pattern (CLAUDE.md updated to document it, still 48 lines). Found two real bugs while verifying against live data rather than trusting the docs: (1) every metric name in metrics-dictionary.md's PromQL examples is stale — real names are double-prefixed by the collector's `namespace: agent` exporter setting plus an auto-appended `_total` (D-009; folded into T-008's scope rather than opening a duplicate task); (2) emit_counter()'s DELTA-temporality metrics weren't accumulating correctly through the Prometheus exporter at all — series appeared/vanished/overwrote instead of incrementing, which would have made every increase()/rate() panel unreliable. Fixed by adding a `delta_to_cumulative` processor to the collector's metrics pipeline (D-010). Verified end-to-end post-fix: watched a real Bash-tool counter accumulate 1->4 across three spaced tool calls with correct `increase()` output, both directly against Prometheus and proxied through Grafana's own datasource API, plus confirmed real trace data resolves through Grafana's Tempo proxy."
+    },
+    {
+      "id": "T-005",
+      "title": "Fix tool-name mismatch in stop.sh's read-before-write check",
+      "completed_date": "2026-08-12",
+      "session_ref": "S-007",
+      "notes": "Decision (D-011): Read=read, Edit=write (Claude Code enforces a prior Read before Edit, so this check is meaningful), Bash-with-redirect=write (same heuristic as before, just correctly named), Write=exempt (no prior-existence signal in the hook payload to distinguish legitimate new-file creation from a blind overwrite, same treatment the old fictional-tool-name code gave 'create_file'). Also dropped the now-dead 'create_file' skip-loop since Write no longer enters the write-targets set at all. Verified against a synthetic 5-record session log (not the live one, to avoid disrupting hook state mid-session) covering all four cases: Edit-after-Read (no violation), Edit-without-Read (violation), Write-to-new-file (never flagged), Bash-redirect-to-unread-target (violation) — exactly 2 violations fired, matching expectations. Unblocks T-011 and T-012, which depended on the same tool-name mapping decision."
     }
   ]
 }
@@ -241,12 +283,15 @@
 | T-002 | Run `install.sh` preflight | S | 2 | done |
 | T-003 | Stand up the otel-collector via docker-compose | S | 3 | done |
 | T-004 | Verify hooks fire end-to-end | M | 4 | done |
-| T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | pending |
+| T-005 | Fix tool-name mismatch in `stop.sh`'s read-before-write check | S | 5 | done |
 | T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
 | T-007 | Fix fake-metrics gap: `emit_counter()` never sends real OTLP metrics | M | 7 | done |
 | T-008 | Fix stale TraceQL/PromQL examples in `metrics-dictionary.md` | S | 8 | pending |
 | T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
 | T-010 | Create Grafana dashboards for OTEL metrics and traces | M | 4 | done |
+| T-011 | Add Skill Activations section to `stop.sh` | S | 9 | pending |
+| T-012 | Add Task Decomposition Efficiency section to `stop.sh` | M | 10 | pending |
+| T-013 | Add Agent Robustness (error recovery) section to `stop.sh` | M | 11 | pending |
 
 ## Decisions
 
@@ -260,6 +305,7 @@
 - **D-008** (2026-08-11): Rewrote `emit_counter()` to POST real OTLP `Sum` metrics (delta temporality) via `curl`+`jq` instead of faking counters as `otel-cli` spans — `otel-cli` still has no metrics command as of its latest release (v0.4.5). Zero changes needed to the three call sites since the function signature stayed the same.
 - **D-009** (2026-08-12): Built T-010's dashboards against the real double-prefixed metric names (`agent_agent_tool_call_total`, not `agent_tool_call_total`) — the collector's `namespace: agent` exporter setting doubles up with metric names that already start with `agent.`. `metrics-dictionary.md`'s PromQL examples are all stale on this; folded into T-008 rather than opening a duplicate doc-fix task.
 - **D-010** (2026-08-12): Added a `delta_to_cumulative` processor to the collector's metrics pipeline — D-008's DELTA-temporality counters weren't accumulating correctly through the Prometheus exporter (series appeared/vanished/overwrote instead of incrementing), which would have made every `rate()`/`increase()` query unreliable. Verified fixed by watching a real counter accumulate correctly across spaced tool calls.
+- **D-011** (2026-08-12): `stop.sh`'s read-before-write check now maps `Read`=read, `Edit`=write, `Bash`-with-redirect=write, and exempts `Write` entirely (no signal in the hook payload distinguishes new-file creation from a blind overwrite). Verified against a synthetic 4-case session log — exactly the 2 expected violations fired.
 
 ## Completed
 
@@ -271,3 +317,4 @@
 - **T-007** (2026-08-11, S-004): `emit_counter()` now sends real OTLP metrics (D-008) instead of fake spans — verified with detailed collector-log output showing correct name/type/temporality/attributes/value, and confirmed both per-call and session-level (`stop.sh`) metrics land correctly.
 - **T-009** (2026-08-12, S-005): Replaced OpenObserve with Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) via a 4-task SDD plan. Hit and resolved a real Tempo v3.0.0 schema blocker (dropped the brief's `compactor` block, accepted default retention — user's call). Verified end-to-end via real hook-lib span/counter emission queried back from Tempo and Prometheus directly, plus Grafana health/datasource checks, with all four services running together. Commits: `379c49b`, `41d206d`, `f9b33be`.
 - **T-010** (2026-08-12, S-006): Built two provisioned Grafana dashboards — `Agent Tool Metrics` (Prometheus, 4-row layout) and `Agent Tool Traces` (Tempo, session/error/slow-call search). Found and fixed two real pipeline bugs while verifying against live data: metrics-dictionary.md's PromQL examples use stale (non-double-prefixed) metric names (D-009), and DELTA-temporality counters weren't accumulating through the Prometheus exporter at all until a `delta_to_cumulative` processor was added (D-010). Verified end-to-end: real Bash-tool counter accumulating correctly, real traces resolving through Grafana's Tempo proxy.
+- **T-005** (2026-08-12, S-007): Fixed `stop.sh`'s read-before-write check to use real Claude Code tool names (D-011: `Read`=read, `Edit`=write, `Bash`-redirect=write, `Write`=exempt). Verified against a synthetic session log covering all four cases — correct violations fired. Unblocks T-011/T-012.
