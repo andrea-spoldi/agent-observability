@@ -17,6 +17,18 @@ metrics/traces to a local otel-collector.
   this. Sending either to 4317 silently sends nothing.
 - The otel-collector config path is fixed in `docker-compose.yaml`; if the collector
   config moves, update the volume mount there too.
+- Traces export to Tempo (`otlp/tempo` exporter → `tempo:4317`, OTLP/gRPC, internal
+  compose network only). Metrics export to Prometheus via the collector's own
+  `prometheus` exporter (`:8889/metrics`), which Prometheus scrapes every 15s —
+  metrics do NOT reach Prometheus in real time, allow one scrape interval.
+- Grafana's Tempo/Prometheus datasources are provisioned via
+  `assets/grafana-datasources.yaml` mounted into
+  `/etc/grafana/provisioning/datasources/`. Editing datasource URLs anywhere
+  else (e.g. through the Grafana UI) won't survive a container recreate —
+  edit that file instead.
+- All four services (`otel-collector`, `tempo`, `prometheus`, `grafana`) are
+  defined in the one `docker-compose.yaml`; there is no separate compose file
+  per service.
 
 ## Intentional decisions
 - Hooks degrade gracefully: if the collector is unreachable, they still log to
@@ -26,3 +38,5 @@ metrics/traces to a local otel-collector.
 - Hook scripts: bash, using `jq` + `otel-cli` (traces) + `curl` (metrics, hand-built
   OTLP/HTTP JSON — `otel-cli` has no metrics command)
 - Collector: `otel/opentelemetry-collector-contrib` via docker-compose
+- Backends: `grafana/tempo` (traces), `prom/prometheus` (metrics),
+  `grafana/grafana` (dashboards) — all via the same docker-compose.yaml

@@ -3,13 +3,13 @@
 ```json
 {
   "project": "test-o11y",
-  "updated": "2026-08-11",
-  "_session_note": "S-004 closed 2026-08-11. Closed the fake-metrics gap found while answering a user question after S-003: emit_counter() now sends real OTLP metrics (D-008) instead of spans tagged to look like counters. T-005 (stop.sh tool-name mismatch) and T-008 (stale TraceQL docs, found this session) are still open. Not yet pushed to GitHub — pending user confirmation like the S-003 push was.",
+  "updated": "2026-08-12",
+  "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-004",
-    "goal": "Fix fake-metrics gap: make emit_counter() send real OTLP metrics (T-007)",
-    "task_ref": "T-007",
+    "id": "S-005",
+    "goal": "Replace OpenObserve with Tempo + Prometheus + Grafana for traces/metrics (T-009)",
+    "task_ref": "T-009",
     "started": "2026-08-11",
     "status": "done",
     "blocker": null
@@ -191,6 +191,13 @@
       "completed_date": "2026-08-11",
       "session_ref": "S-004",
       "notes": "Implemented per D-008: emit_counter() now posts real OTLP Sum metrics via curl+jq, zero changes needed to the three call sites. Ruled out staying within otel-cli by checking its release history (still v0.4.5, metrics never shipped). Verified the collector's HTTP receiver accepts OTLP JSON (not just protobuf) before committing to the approach. Hit and fixed one bug during testing: jq's --args needs the filter immediately after it, positional args after — had them reversed initially, which made jq try to compile 'tool_name=Bash' as a jq program. Verified end-to-end: collector debug exporter (bumped to verbosity:detailed temporarily, reverted after) showed correct name/type/temporality/attributes/value for a real emit_counter call, and both pre/post-hook call-level metrics and stop.sh's session-level metrics land correctly. Added a curl preflight check to install.sh since it's now a runtime dependency, not just install-time. Updated README.md and CLAUDE.md to describe the new mechanism. Opened T-008 for an unrelated stale-docs issue found along the way (metrics-dictionary.md's TraceQL examples reference span attributes that don't exist)."
+    },
+    {
+      "id": "T-009",
+      "title": "Replace OpenObserve with Tempo + Prometheus + Grafana",
+      "completed_date": "2026-08-12",
+      "session_ref": "S-005",
+      "notes": "Executed as a 4-task SDD plan (docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md; design doc at docs/superpowers/specs/2026-08-11-tempo-grafana-migration-design.md). Task 1 (Tempo): hit a real blocker — the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present (commit ab992b8 shipped the spec-faithful-but-broken version; paused for controller/user decision at the session boundary). On resume, user chose to drop the block and accept Tempo's default 336h retention rather than pin an older Tempo version or hunt for a v3.0.0-native retention equivalent (commit 379c49b); retention hardening deferred to a future task. Task 2 (Prometheus, commit 41d206d): collector's prometheus exporter wired into the metrics pipeline, Prometheus container added scraping :8889 every 15s. Task 3 (Grafana, commit f9b33be): datasources auto-provisioned via file (assets/grafana-datasources.yaml), no starter dashboard per plan constraints. All verification used real data through the actual hook lib (start_span/end_span/emit_counter), never synthetic payloads — confirmed via Tempo's /api/search, Prometheus's query API, and Grafana's /api/health + /api/datasources, first per-task and then as a full-stack proof with all four services running together. Also resolved the hardcoded-credential issue found at the start of S-005 as a side effect — the OpenObserve exporter and its Authorization header are gone entirely. The orphaned openobserve container from the earlier proof-of-concept (started via plain docker run, outside this repo's docker-compose.yaml) is still running and still holds port 5080; user can docker stop/rm it once satisfied."
     }
   ]
 }
@@ -208,6 +215,7 @@
 | T-006 | Publish reproducible sandbox to GitHub | M | 6 | done |
 | T-007 | Fix fake-metrics gap: `emit_counter()` never sends real OTLP metrics | M | 7 | done |
 | T-008 | Fix stale TraceQL examples in `metrics-dictionary.md` | S | 8 | pending |
+| T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
 
 ## Decisions
 
@@ -228,3 +236,4 @@
 - **T-004** (2026-08-11, S-002): Verified hooks fire end-to-end after fixing four compounding bugs (D-003 through D-006). Confirmed via collector logs (`"resource spans": 1`), a correct `duration_ms`, correctly-named span files, and a clean manual `stop.sh` run (archived log, reset session state). Also corrected `CLAUDE.md` and `SKILL.md`, which both documented the disproven "hooks.json is authoritative" assumption.
 - **T-006** (2026-08-11, S-003): Made hook config portable (D-007), wrote `.gitignore`/`README.md`, and pushed the initial commit to `https://github.com/andrea-spoldi/agent-observability` (main).
 - **T-007** (2026-08-11, S-004): `emit_counter()` now sends real OTLP metrics (D-008) instead of fake spans — verified with detailed collector-log output showing correct name/type/temporality/attributes/value, and confirmed both per-call and session-level (`stop.sh`) metrics land correctly.
+- **T-009** (2026-08-12, S-005): Replaced OpenObserve with Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) via a 4-task SDD plan. Hit and resolved a real Tempo v3.0.0 schema blocker (dropped the brief's `compactor` block, accepted default retention — user's call). Verified end-to-end via real hook-lib span/counter emission queried back from Tempo and Prometheus directly, plus Grafana health/datasource checks, with all four services running together. Commits: `379c49b`, `41d206d`, `f9b33be`.
