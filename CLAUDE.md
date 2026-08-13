@@ -21,6 +21,12 @@ metrics/traces to a local otel-collector.
   compose network only). Metrics export to Prometheus via the collector's own
   `prometheus` exporter (`:8889/metrics`), which Prometheus scrapes every 15s —
   metrics do NOT reach Prometheus in real time, allow one scrape interval.
+- `emit_counter()` sends DELTA-temporality Sums; the collector's
+  `delta_to_cumulative` processor (metrics pipeline) converts them to real
+  cumulative counters before export — remove it and `rate()`/`increase()`
+  queries silently return empty or wrong results. The `prometheus` exporter's
+  `namespace: agent` also doubles every metric name (`agent.tool.call.total`
+  → `agent_agent_tool_call_total`).
 - Grafana's Tempo/Prometheus datasources are provisioned via
   `assets/grafana-datasources.yaml` mounted into
   `/etc/grafana/provisioning/datasources/`. Editing datasource URLs anywhere
@@ -39,10 +45,3 @@ metrics/traces to a local otel-collector.
 ## Intentional decisions
 - Hooks degrade gracefully: if the collector is unreachable, they still log to
   `${OTEL_SESSION_DIR:-/tmp/agent-otel-session}/` instead of failing the tool call.
-
-## Stack shorthand
-- Hook scripts: bash, using `jq` + `otel-cli` (traces) + `curl` (metrics, hand-built
-  OTLP/HTTP JSON — `otel-cli` has no metrics command)
-- Collector: `otel/opentelemetry-collector-contrib` via docker-compose
-- Backends: `grafana/tempo` (traces), `prom/prometheus` (metrics),
-  `grafana/grafana` (dashboards) — all via the same docker-compose.yaml
