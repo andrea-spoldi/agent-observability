@@ -12,9 +12,10 @@
     {
       "type": "stat",
       "title": "Overall Success Rate",
+      "description": "Computed from agent.tool.call.total's own outcome label (success vs total) rather than dividing by agent.tool.call.error.total. The error-total metric doesn't exist in Prometheus at all until the first error ever happens — dividing by an absent series returns no data, not zero, so a 1 - (errors/total) formula would wrongly show 'No data' instead of 100% on a clean run.",
       "gridPos": { "x": 0, "y": 1, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "1 - (sum(rate(agent_agent_tool_call_error_total[$__rate_interval])) / sum(rate(agent_agent_tool_call_total[$__rate_interval])))", "refId": "A" }],
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(agent_agent_tool_call_total{outcome=\"success\"}[$__rate_interval])) / sum(rate(agent_agent_tool_call_total[$__rate_interval]))", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [
         { "color": "red", "value": null },
         { "color": "yellow", "value": 0.75 },
@@ -32,7 +33,7 @@
     {
       "type": "stat",
       "title": "Session Success Rate (Σ over range)",
-      "description": "agent.session.success_rate_pct is emitted via emit_counter() as a DELTA Sum, not a true OTLP gauge (see D-008 in TASKS.md) — each stop.sh run adds one session's rate as a delta, which the Prometheus exporter accumulates into an ever-increasing counter. There is no instantaneous 'current value' to read, so this sums the deltas added in the selected time range instead. That equals a single session's rate if only one session ended in range; if several did, values add up and can exceed 100. Narrow the time range to one session for a clean reading.",
+      "description": "agent.session.success_rate_pct is emitted via emit_counter() as a DELTA Sum, not a true OTLP gauge (see D-008 in TASKS.md) — each stop.sh run adds one session's rate as a delta, which the Prometheus exporter accumulates into an ever-increasing counter. There is no instantaneous 'current value' to read, so this sums the deltas added in the selected time range instead. That equals a single session's rate if only one session ended in range; if several did, values add up and can exceed 100. Narrow the time range to one session for a clean reading. EXPECTED 0%/No data during an ongoing session: this metric only gets a data point when stop.sh actually runs (session end) — a long-running active session with no recent session boundary will show 0, not because any session scored badly, but because there's no recent delta to sum. This is a real limitation of a once-per-session counter, not a bug to chase.",
       "gridPos": { "x": 12, "y": 1, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(agent_agent_session_success_rate_pct_total[$__range]))", "refId": "A" }],
