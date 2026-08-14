@@ -20,23 +20,50 @@
   },
   "panels": [
     {
+      "type": "row",
+      "title": "Trends (TraceQL metrics — grouped counts over time)",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool Call Volume Over Time (by tool)",
+      "description": "TraceQL metrics query, grouped by agent.tool.name. Complements the Metrics dashboard's static 'Calls by Tool' bar chart with a time dimension — shows *when* each tool was used, not just the total. Tempo caps metrics queries at a 24h window; widen the dashboard's time range past that and this panel errors while the table panels below keep working.",
+      "gridPos": { "x": 0, "y": 1, "w": 12, "h": 9 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{} | count_over_time() by(span.agent.tool.name)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Skill Invocations Over Time (by skill)",
+      "description": "TraceQL metrics query, grouped by agent.skill.name (D-017) — shows which skills ran and when, at per-interaction resolution. The Metrics dashboard's agent.skill.activation only gives a once-per-session total; this is the time-resolved view. Points are exemplars linking back to the actual trace. Same 24h Tempo window cap as the tool-volume panel.",
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 9 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.agent.tool.name = \"Skill\" } | count_over_time() by(span.agent.skill.name)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Search", "collapsed": false, "gridPos": { "x": 0, "y": 10, "w": 24, "h": 1 }, "panels": [] },
+    {
       "type": "table",
       "title": "All Recent Traces",
-      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 10 },
+      "gridPos": { "x": 0, "y": 11, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{}", "refId": "A" }]
     },
     {
       "type": "table",
       "title": "Error Spans",
-      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 10 },
+      "gridPos": { "x": 0, "y": 21, "w": 12, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ status = error }", "refId": "A" }]
     },
     {
       "type": "table",
       "title": "Slow Tool Calls (> 5s)",
-      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 10 },
+      "gridPos": { "x": 12, "y": 21, "w": 12, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ duration > 5s }", "refId": "A" }]
     },
@@ -44,7 +71,7 @@
       "type": "table",
       "title": "Traces for Session ($session_id)",
       "description": "Fill in the session_id variable above (matches agent.session.id, a span-level attribute set on every span by common.sh's start_span). Empty by default — shows no results until a session ID is entered.",
-      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 10 },
+      "gridPos": { "x": 0, "y": 31, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.agent.session.id = \"$session_id\" }", "refId": "A" }]
     }
