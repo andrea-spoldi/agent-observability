@@ -30,9 +30,22 @@ log_debug "PreToolUse: ${TOOL_NAME} (${CALL_ID})"
 # ---------------------------------------------------------------------------
 # 1. Open span
 # ---------------------------------------------------------------------------
-start_span "tool:${TOOL_NAME}" "${SPAN_FILE}" \
-  "agent.tool.name=${TOOL_NAME}" \
+# The Skill tool's input has a `skill` field (which skill is being invoked) —
+# put it on the span so TraceQL can filter by skill directly
+# ({ span.agent.skill.name = "..." }) instead of only seeing "a Skill call
+# happened" with no identity. Session-level aggregates already exist via
+# agent.skill.activation (stop.sh), but that's a once-per-session summary,
+# not something queryable per-interaction.
+SPAN_ATTRS=(
+  "agent.tool.name=${TOOL_NAME}"
   "agent.tool.params_hash=${PHASH}"
+)
+if [[ "${TOOL_NAME}" == "Skill" ]]; then
+  SKILL_NAME="$(echo "${TOOL_INPUT}" | jq -r '.skill // ""' 2>/dev/null)"
+  [[ -n "${SKILL_NAME}" ]] && SPAN_ATTRS+=("agent.skill.name=${SKILL_NAME}")
+fi
+
+start_span "tool:${TOOL_NAME}" "${SPAN_FILE}" "${SPAN_ATTRS[@]}"
 
 # Record start time for duration histogram
 now_ms > "${TS_FILE}"

@@ -154,6 +154,11 @@ this list without checking, it drifts easily):
   was a real, previously-shipped doc bug — see `D-012` in `TASKS.md`).
 - `agent.tool.name` — the tool invoked
 - `agent.tool.params_hash` — hash of input params (for dedup detection)
+- `agent.skill.name` — only present when `agent.tool.name` is `Skill`; which
+  skill was invoked. Query `{ span.agent.skill.name = "<name>" }` to see every
+  invocation of a specific skill positioned in real time against the rest of
+  its session's spans — the session-level `agent.skill.activation` metric
+  (above) only gives you a once-per-session total, not per-interaction detail.
 - `agent.framework` — static value, added by the collector's `attributes`
   processor, not the hook itself
 
