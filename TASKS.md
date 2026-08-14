@@ -7,10 +7,10 @@
   "_session_note": "S-005 spanned 2026-08-11 to 2026-08-12 (resumed after a session boundary). Replaced OpenObserve entirely with a Tempo (traces) + Prometheus (metrics) + Grafana (dashboards, datasources auto-provisioned) stack per the SDD plan at docs/superpowers/plans/2026-08-11-tempo-grafana-migration.md, executed task-by-task with real per-task commits (fb0d8fc/ab992b8/379c49b for Task 1, 41d206d for Task 2, f9b33be for Task 3). Task 1 hit a real blocker mid-session-1: the brief's compactor.compaction.block_retention block is valid YAML but Tempo v3.0.0 removed the legacy compactor component from its schema, so the container refused to start with it present — paused for a controller/user decision. On resume, user chose to drop the block and accept Tempo's default 336h retention (deferring retention hardening to a future task) rather than pin an older Tempo version or hunt for a v3.0.0-native equivalent. All three backends verified end-to-end together via real hook-lib span/counter emission (start_span/end_span/emit_counter), queried back from Tempo's /api/search and Prometheus's query API directly, with Grafana's health check and both datasources (Tempo, Prometheus) confirmed provisioned via its API. T-005 and T-008 remain the top pending backlog items for the next session. Untracked clipped-article file at repo root still unaddressed, low priority. The openobserve container from the earlier proof-of-concept is still running (started via plain docker run, not part of this repo's docker-compose.yaml) — user can docker stop/rm it once satisfied the new stack covers their needs.",
 
   "current_session": {
-    "id": "S-012",
-    "goal": "Update README.md, SKILL.md, CLAUDE.md to explain how to use the PoC and fix stale content",
+    "id": "S-014",
+    "goal": "Add agent.skill.name span attribute so traces can identify which skill ran per interaction",
     "task_ref": null,
-    "started": "2026-08-13",
+    "started": "2026-08-14",
     "status": "done",
     "blocker": null
   },
@@ -113,7 +113,7 @@
       "description": "From stop-sh-changes.md (untracked proposal doc at repo root, never implemented). Classify each tool call into a phase (read/write/execute/other), count 'bursts' of consecutive same-phase calls, emit `agent.decomposition.burst_count`, `agent.decomposition.avg_burst_size_x10` (x10 to avoid float issues in counter emission), `agent.decomposition.max_burst_size`, `agent.decomposition.productive_ratio_pct`. T-005 (resolved 2026-08-12, D-011) settled the tool-name mapping this phase classification should reuse: Read=read, Edit=write, Bash(redirect)=write, Write=exempt/other — the doc's phase table used fictional names ('view'/'str_replace'/'create_file'/'bash_tool').",
       "size": "M",
       "priority": 10,
-      "status": "pending",
+      "status": "done",
       "tags": ["hooks", "feature", "stop.sh", "metrics"]
     },
     {
@@ -124,6 +124,15 @@
       "priority": 11,
       "status": "pending",
       "tags": ["hooks", "feature", "stop.sh", "metrics"]
+    },
+    {
+      "id": "T-014",
+      "title": "Fix fictional tool names in pre_tool_use.sh's path_not_found check",
+      "description": "pre_tool_use.sh's param-precision check for missing files (assets/hooks/pre_tool_use.sh, path_not_found detection) only fires `if [[ \"${TOOL_NAME}\" == \"view\" || \"${TOOL_NAME}\" == \"cat\" ]]` — neither is a real Claude Code tool name (same bug class as T-005, which fixed the analogous issue in stop.sh's read-before-write check). Found while implementing D-017 (skill-name span attribute), not fixed at the time — out of scope for that task. Real read tool is `Read`; decide whether `Bash` running `cat` should also count (TOOL_NAME would be `Bash`, not `cat`, so the check can't currently distinguish a `cat` invocation from any other Bash command without inspecting .command).",
+      "size": "S",
+      "priority": 12,
+      "status": "pending",
+      "tags": ["hooks", "bugfix", "pre_tool_use.sh"]
     }
   ],
 
@@ -232,6 +241,20 @@
       "decision": "Rewrote the 'Overall Success Rate' panel to compute success rate from agent_agent_tool_call_total's own outcome label (`{outcome=\"success\"} / total`) instead of `1 - (error_total / call_total)`. Left 'Session Success Rate' as-is but strengthened its description to explicitly say 0%/No data during an active, still-running session is expected, not a real failure signal.",
       "rationale": "User asked why these two panels showed No data / 0%. Verified against live Prometheus: agent_agent_tool_call_error_total doesn't exist at all (zero errors ever recorded) — a division formula against an absent series returns no data in PromQL, not zero, so '1 - (errors/total)' wrongly showed 'No data' on a clean run instead of 100%. Fixed by computing the ratio from a metric that's guaranteed to exist (call_total is emitted on every single call, success or error) — verified the new query returns 1 (100%) against live data. Session Success Rate's 0% has a different, non-buggy cause already documented at D-009/D-010: it's a once-per-session delta counter, and increase() needs 2+ points in the window to show a nonzero delta — an ongoing session with no recent stop.sh run legitimately has nothing new to sum. Chose not to change that query further since doing so correctly would require redesigning how the metric is emitted (out of scope for a dashboard-panel question); documented the behavior instead so it reads as expected, not broken.",
       "supersedes": null
+    },
+    {
+      "id": "D-016",
+      "date": "2026-08-14",
+      "decision": "Fixed post_tool_use.sh's session-log RECORD construction from `jq -n` to `jq -nc` (compact output), and stop.sh's SUCCESS_COUNT computation from `jq -r 'select(...)'` to `jq -c 'select(...)'`. Both were silently producing pretty-printed, multi-line JSON per record in a file named session.jsonl (JSON-Lines — one object per line, by definition) and being piped straight into `wc -l`.",
+      "rationale": "Found while verifying T-012's new decomposition metrics against a synthetic test: hand-computed 6 successes out of 7 calls, but the script's own SUCCESS_COUNT came back as 54. Traced it to jq re-serializing matched objects in its own default pretty-print form regardless of input formatting — confirmed against the REAL live session log too (`wc -l` said 120, `jq -s length` said 12 — exactly the 8-field-plus-braces = 10-lines-per-record inflation). This is a real, previously-shipped bug: `agent.tool.calls_per_session` (T-007, D-008, live since 2026-08-11) has been emitting the file's raw line count instead of the record count — roughly 10x inflated — for every single session since it launched. `agent.session.success_rate_pct` was accidentally unaffected: since both its numerator and denominator inflated by the same per-record factor (every record has the same field count, success or error), the ratio canceled the bug out by coincidence. T-012's own `agent.decomposition.avg_burst_size_x10` would NOT have gotten that same lucky cancellation (TOTAL_CALLS inflated, BURST_COUNT correct — since burst detection reads jq string output, immune to the pretty-print bug — so the ratio would have been ~10x wrong) had this not been caught before shipping. Verified the fix's correctness by re-running the same synthetic test post-fix: SUCCESS_COUNT correctly reads 6, and all four T-012 metrics compute exactly as hand-expected.",
+      "supersedes": null
+    },
+    {
+      "id": "D-017",
+      "date": "2026-08-14",
+      "decision": "Added `agent.skill.name` as a span attribute in pre_tool_use.sh (extracted from tool_input's `.skill` field, same fallback pattern as post_tool_use.sh's target extraction from D-013), set only when the tool being called is `Skill`.",
+      "rationale": "User asked whether traces/metrics could show which skill was used per interaction. Checked a real live Skill span's raw attributes first rather than assuming: it only carried agent.tool.name=\"Skill\", an opaque params_hash, session id, and framework — no skill identity at all. agent.skill.activation (T-011/D-013) only gives a once-per-session aggregate count by skill_name, not something positioned in the trace timeline. Unlike retry/duplicate detection (which D-012 established can't be a span attribute, since it needs to see future calls), the skill name IS fully known at span-creation time — pre_tool_use.sh already receives the same tool_input post_tool_use.sh does. Verified end-to-end through the real hook scripts (not just read the code): ran a synthetic Skill call through pre_tool_use.sh + post_tool_use.sh in an isolated OTEL_SESSION_DIR (to avoid polluting this session's real data) hitting the real collector/Tempo, then confirmed `{ span.agent.skill.name = \"verify-test-skill\" }` found exactly that span in Tempo.",
+      "supersedes": null
     }
   ],
 
@@ -333,6 +356,20 @@
       "completed_date": "2026-08-13",
       "session_ref": "S-012",
       "notes": "README.md was still describing the pre-T-009 single-collector setup with no mention of Tempo/Prometheus/Grafana at all, and its 'Known limitations' section claimed T-005/T-008 were still open (both done days ago). Rewrote: quick start now covers the full 4-service docker-compose stack, added a 'Viewing the data' section (Grafana URL/login, the two dashboards, scrape-delay expectations, direct backend access), replaced the stale limitations list with the three that are actually still true (once-per-session success-rate counter behavior, TraceQL can't see retry/duplicate, T-012/T-013 not yet built), and updated the decision-log pointer from D-008 to D-015. SKILL.md (the portable/generic skill doc, meant for adopting this elsewhere) was more substantially wrong — it described the never-implemented aspirational design rather than what's actually built: `agent.tool.calls_per_session` documented as Histogram when it's actually a Counter; span attributes list included agent.tool.outcome/is_retry/is_duplicate, none of which are real (confirmed empirically in T-008/D-012 — outcome is only on span status, retry/duplicate are metrics-only); the read-before-write and trace examples still used fictional tool names (str_replace/view/bash_tool) instead of D-011's real Read/Edit/Write/Bash mapping; Setup Step 2 was a generic `docker run` one-liner with no mention of this repo's actual working Tempo+Prometheus+Grafana compose stack or the two adoption gotchas (D-009 metric-naming double-prefix, D-010 delta_to_cumulative requirement) anyone reusing this with their own Prometheus would hit; file manifest was missing every dashboard/backend-config asset added since T-009/T-010. Added a new Skill Activation metrics section (T-011) that didn't exist in the doc at all. CLAUDE.md got a new bullet documenting the delta_to_cumulative/metric-naming gotchas (real, previously-undocumented architecture constraints), and had its redundant 'Stack shorthand' section removed to stay under the project's own 50-line budget (47 lines after the trade)."
+    },
+    {
+      "id": "T-012",
+      "title": "Add Task Decomposition Efficiency section to stop.sh",
+      "completed_date": "2026-08-14",
+      "session_ref": "S-013",
+      "notes": "Phase mapping per D-011's real tool names: Read=read, Edit/Write=write (unlike section 2's read-before-write check, Write counts as write here — labeling the action type, not judging blind-edit risk, so the new-file exemption doesn't apply), Bash=execute, everything else=other. Burst detection (maximal runs of consecutive same-phase calls) implemented as a bash loop over jq-extracted phase strings, hand-verified against 4 traced synthetic phase sequences before touching real data. Emits agent.decomposition.burst_count, avg_burst_size_x10, max_burst_size, and productive_ratio_pct (= session success rate; the proposal doc's 'success rate of calls within bursts' is mathematically identical to the overall session rate since bursts partition the whole session — not a bug that it duplicates agent.session.success_rate_pct, just a differently-named view for decomposition-specific dashboards). Found and fixed a real, previously-shipped bug while verifying against synthetic data (D-016): post_tool_use.sh built session-log records with `jq -n` (no `-c`), so a file named session.jsonl was actually ~10 pretty-printed lines per record, not one — confirmed against the live session log too (120 raw lines, 12 actual records). This silently broke `agent.tool.calls_per_session` (~10x inflated since T-007 shipped it) and would have broken this task's own avg_burst_size_x10 the same way had it not been caught first. Fixed both the write side (post_tool_use.sh, added -c) and stop.sh's own SUCCESS_COUNT computation (same bug, second occurrence). Re-verified all four new metrics plus the corrected SUCCESS_COUNT against the same synthetic session log post-fix — every value matched hand-calculation exactly."
+    },
+    {
+      "id": "skill-name-span-attr",
+      "title": "Add agent.skill.name span attribute (per-interaction skill visibility)",
+      "completed_date": "2026-08-14",
+      "session_ref": "S-014",
+      "notes": "User asked whether traces/metrics could show which skill ran per interaction. Checked a real live Skill span first (not assumption): only agent.tool.name/params_hash/session.id/framework were on it, no skill identity — confirmed the gap was real before proposing a fix (D-017). Added agent.skill.name to pre_tool_use.sh's start_span call, extracted from tool_input.skill, set only when tool_name==\"Skill\". Verified end-to-end through the real hook scripts in an isolated OTEL_SESSION_DIR (didn't want to pollute this session's real skill-activation counts with a fabricated call) hitting the real collector/Tempo: `{ span.agent.skill.name = \"verify-test-skill\" }` found exactly the synthetic span. Also spotted (but did not fix, out of scope) a second instance of T-005's fictional-tool-name bug class: pre_tool_use.sh's path_not_found check compares against `view`/`cat`, which are never real Claude Code tool names either."
     }
   ]
 }
@@ -353,8 +390,9 @@
 | T-009 | Replace OpenObserve with Tempo + Prometheus + Grafana | M | 4 | done |
 | T-010 | Create Grafana dashboards for OTEL metrics and traces | M | 4 | done |
 | T-011 | Add Skill Activations section to `stop.sh` | S | 9 | done |
-| T-012 | Add Task Decomposition Efficiency section to `stop.sh` | M | 10 | pending |
+| T-012 | Add Task Decomposition Efficiency section to `stop.sh` | M | 10 | done |
 | T-013 | Add Agent Robustness (error recovery) section to `stop.sh` | M | 11 | pending |
+| T-014 | Fix fictional tool names in `pre_tool_use.sh`'s `path_not_found` check | S | 12 | pending |
 
 ## Decisions
 
@@ -373,6 +411,8 @@
 - **D-013** (2026-08-12): Skill activation detection uses the real `Skill` tool (target==skill name, via a new `.skill` fallback in `post_tool_use.sh`'s target-extraction), not the proposal doc's Read-of-SKILL.md approach — checked real archived session logs first and found every `Skill` record had an empty target, since skill invocation is its own tool in this harness, not a file read.
 - **D-014** (2026-08-13): Traces dashboard's 4 panels switched from `\"type\": \"traces\"` to `\"type\": \"table\"` — the `traces` panel type renders one trace's span waterfall, not a multi-trace search-result list, which is what every panel's query actually returns. Found by loading the dashboard in a real browser (T-010's original verification never had) and confirmed via Grafana's own Inspect > Data and panel-editor visualization switcher before touching the source file.
 - **D-015** (2026-08-13): 'Overall Success Rate' now computes from `call_total{outcome="success"}/call_total` instead of `1 - (error_total/call_total)` — the error-total metric doesn't exist until the first error ever happens, and dividing by an absent series returns no data in PromQL, not zero. 'Session Success Rate' left as-is at 0%/No data during an active session — that's expected once-per-session delta-counter behavior (D-009/D-010), not a bug; description strengthened to say so.
+- **D-016** (2026-08-14): Fixed `post_tool_use.sh`'s session-log writer (`jq -n` → `jq -nc`) and `stop.sh`'s `SUCCESS_COUNT` computation (same fix) — a file named `session.jsonl` was actually ~10 pretty-printed lines per record, not one. Found while testing T-012 against synthetic data; confirmed live (120 raw lines, 12 real records). Had been silently inflating `agent.tool.calls_per_session` ~10x since T-007 shipped it; `agent.session.success_rate_pct` was accidentally unaffected since both sides of its ratio inflated by the same factor.
+- **D-017** (2026-08-14): Added `agent.skill.name` as a span attribute (`pre_tool_use.sh`, set when tool==`Skill`) so TraceQL can filter by which skill ran per interaction — the existing `agent.skill.activation` metric only gives a once-per-session total. Checked a real Skill span first and confirmed it carried no skill identity before building the fix; verified the fix end-to-end through the real hooks against a live collector/Tempo in an isolated session dir.
 
 ## Completed
 
@@ -390,3 +430,5 @@
 - **T-010 regression fix** (2026-08-13, S-010): Traces dashboard looked empty to the user despite T-010's earlier API-level verification passing — the gap was never loading it in an actual browser. Root cause: wrong panel type (D-014, `traces` vs `table`). Fixed and re-verified all 4 panels in-browser with real data, including the session-scoped filter.
 - **T-010 regression fix #2** (2026-08-13, S-011): User asked why 'Overall Success Rate' showed No data and 'Session Success Rate' showed 0%. First was a real query bug (D-015, dividing by an absent error metric); fixed and verified returns 100% live. Second is expected once-per-session counter behavior, not a bug — documented in the panel instead of chased further.
 - **Docs update** (2026-08-13, S-012): Rewrote `README.md` (was pre-T-009, no Tempo/Prometheus/Grafana mentioned, "known limitations" listed two already-fixed bugs) and `SKILL.md` (still described the never-implemented aspirational design — wrong metric types, fictional span attributes, fictional tool names, missing T-011's Skill Activation metrics, no adoption gotchas for D-009/D-010). Trimmed `CLAUDE.md` back under 50 lines after adding the delta_to_cumulative/naming-prefix constraint.
+- **T-012** (2026-08-14, S-013): Added Task Decomposition Efficiency to `stop.sh` — burst detection across read/write/execute/other phases (D-011's real tool names), 4 new metrics. Found and fixed a real, previously-shipped bug along the way (D-016): `session.jsonl` records were pretty-printed across ~10 lines each despite the `.jsonl` (one-per-line) contract, silently inflating `agent.tool.calls_per_session` ~10x since T-007. Verified all metrics against hand-traced synthetic data post-fix.
+- **Skill-name span attribute** (2026-08-14, S-014): User asked if traces/metrics could show which skill ran per interaction — answer was no (D-017 fixes it). Added `agent.skill.name` to the span pre_tool_use.sh opens for Skill calls. Verified end-to-end through the real hooks against live Tempo. Also flagged (not fixed) a second instance of T-005's fictional-tool-name bug in `pre_tool_use.sh`'s `path_not_found` check (`view`/`cat`, never real tool names) — logged as `T-014`.

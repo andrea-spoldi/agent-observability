@@ -141,13 +141,12 @@ with `_total` auto-appended if the name doesn't already end in it.
   `stop.sh`'s session-log analysis — there's no way to find them via TraceQL,
   since the originating span has no way to know at creation time whether a
   later call will turn out to be a retry or duplicate.
-- Two more `stop.sh` analysis sections (task-decomposition efficiency,
-  error-recovery/"robustness" scoring) are drafted but not yet implemented —
-  tracked as `T-012`/`T-013` in `TASKS.md`.
+- One more `stop.sh` analysis section (error-recovery/"robustness" scoring)
+  is drafted but not yet implemented — tracked as `T-013` in `TASKS.md`.
 
 ## Project history
 
-`TASKS.md` has the full backlog and a decision log (`D-001`…`D-015`) covering
+`TASKS.md` has the full backlog and a decision log (`D-001`…`D-016`) covering
 every bug found while getting this working — several are non-obvious
 environment quirks (BSD `date` vs GNU `date`, `otel-cli`'s HTTP-vs-gRPC port
 selection, Claude Code's actual hook payload field names and tool names,

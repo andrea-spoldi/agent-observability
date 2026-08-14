@@ -103,7 +103,7 @@ TARGET="$(echo "${TOOL_INPUT}" | jq -r '
   (.path // .file // .file_path // .filepath // .command // .skill // "") | tostring | .[0:200]
 ' 2>/dev/null || echo "")"
 
-RECORD="$(jq -n \
+RECORD="$(jq -nc \
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
   --arg tool "${TOOL_NAME}" \
   --arg outcome "${OUTCOME}" \

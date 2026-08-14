@@ -8,8 +8,9 @@
 #   3. Detect retry switches (selection accuracy)
 #   4. Detect consecutive errors (selection accuracy)
 #   5. Detect skill activations (usage)
-#   6. Emit summary metrics
-#   7. Archive session log
+#   6. Analyze task decomposition (burst patterns across read/write/execute phases)
+#   7. Emit summary metrics
+#   8. Archive session log
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -29,6 +30,7 @@ if [[ ! -f "${OTEL_SESSION_LOG}" ]]; then
 fi
 
 TOTAL_CALLS="$(wc -l < "${OTEL_SESSION_LOG}")"
+SUCCESS_COUNT="$(jq -c 'select(.outcome=="success")' "${OTEL_SESSION_LOG}" | wc -l)"
 log_debug "Session had ${TOTAL_CALLS} tool calls"
 
 # ---------------------------------------------------------------------------
@@ -179,13 +181,81 @@ if [[ -n "${SKILL_TARGETS}" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Session-level summary metrics
+# 6. Task decomposition efficiency — burst patterns across phases
+# ---------------------------------------------------------------------------
+# Phase mapping (Claude Code's real tool names, per D-011 — the original
+# proposal used fictional names like view/str_replace/bash_tool). Unlike the
+# read-before-write check in section 2, Write counts as "write" here: this is
+# just labeling what kind of action each call was, not judging whether it was
+# safe, so the new-file-vs-overwrite ambiguity that made Write worth
+# excluding there doesn't apply here.
+#   read    = Read
+#   write   = Edit, Write
+#   execute = Bash
+#   other   = everything else (Skill, WebFetch, MCP tools, ...)
+# A "burst" is a maximal run of consecutive same-phase calls. Short, focused
+# bursts (read -> write -> execute) suggest good decomposition; long,
+# erratic ones suggest the agent is thrashing.
+PHASES="$(jq -r '
+  if .tool == "Read" then "read"
+  elif (.tool == "Edit" or .tool == "Write") then "write"
+  elif .tool == "Bash" then "execute"
+  else "other"
+  end
+' "${OTEL_SESSION_LOG}" 2>/dev/null)"
+
+BURST_COUNT=0
+MAX_BURST=0
+PREV_PHASE=""
+CURRENT_SIZE=0
+if [[ -n "${PHASES}" ]]; then
+  while IFS= read -r phase; do
+    [[ -z "${phase}" ]] && continue
+    if [[ "${phase}" == "${PREV_PHASE}" ]]; then
+      CURRENT_SIZE=$(( CURRENT_SIZE + 1 ))
+    else
+      if [[ -n "${PREV_PHASE}" ]]; then
+        BURST_COUNT=$(( BURST_COUNT + 1 ))
+        (( CURRENT_SIZE > MAX_BURST )) && MAX_BURST=${CURRENT_SIZE}
+      fi
+      PREV_PHASE="${phase}"
+      CURRENT_SIZE=1
+    fi
+  done <<< "${PHASES}"
+  # close out the final burst
+  BURST_COUNT=$(( BURST_COUNT + 1 ))
+  (( CURRENT_SIZE > MAX_BURST )) && MAX_BURST=${CURRENT_SIZE}
+fi
+
+if (( BURST_COUNT > 0 )); then
+  AVG_BURST_SIZE_X10=$(( (10 * TOTAL_CALLS) / BURST_COUNT ))
+  emit_counter "agent.decomposition.burst_count" "${BURST_COUNT}" \
+    "session_id=${SESSION_ID}"
+  emit_counter "agent.decomposition.avg_burst_size_x10" "${AVG_BURST_SIZE_X10}" \
+    "session_id=${SESSION_ID}"
+  emit_counter "agent.decomposition.max_burst_size" "${MAX_BURST}" \
+    "session_id=${SESSION_ID}"
+  log_debug "  decomposition: ${BURST_COUNT} bursts, max ${MAX_BURST}, avg x10 ${AVG_BURST_SIZE_X10}"
+fi
+
+if (( TOTAL_CALLS > 0 )); then
+  # "Productive ratio" per the proposal doc is the success rate of calls
+  # within bursts — since bursts partition the whole session, that's
+  # identical to the overall session success rate below. Emitted under its
+  # own name for decomposition-specific dashboards/alerts; not a bug that
+  # it matches agent.session.success_rate_pct.
+  PRODUCTIVE_RATIO_PCT=$(( SUCCESS_COUNT * 100 / TOTAL_CALLS ))
+  emit_counter "agent.decomposition.productive_ratio_pct" "${PRODUCTIVE_RATIO_PCT}" \
+    "session_id=${SESSION_ID}"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Session-level summary metrics
 # ---------------------------------------------------------------------------
 emit_counter "agent.tool.calls_per_session" "${TOTAL_CALLS}" \
   "session_id=${SESSION_ID}"
 
 # Success rate as a convenience gauge
-SUCCESS_COUNT="$(jq -r 'select(.outcome=="success")' "${OTEL_SESSION_LOG}" | wc -l)"
 if (( TOTAL_CALLS > 0 )); then
   # Emit as integer percentage (0-100)
   RATE=$(( SUCCESS_COUNT * 100 / TOTAL_CALLS ))
@@ -194,7 +264,7 @@ if (( TOTAL_CALLS > 0 )); then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Archive session log
+# 8. Archive session log
 # ---------------------------------------------------------------------------
 ARCHIVE_DIR="${OTEL_SESSION_DIR}/archive"
 mkdir -p "${ARCHIVE_DIR}"
